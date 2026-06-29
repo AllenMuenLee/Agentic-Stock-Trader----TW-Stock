@@ -1,0 +1,74 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String?  @unique
+  lineToken      String?
+  discordWebhook String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  rules          Rule[]
+}
+
+model Rule {
+  id             String    @id @default(cuid())
+  name           String
+  description    String
+  config         String    // JSON-serialized RuleConfig
+  symbols        String    // JSON-serialized string[] (used when poolType = "FIXED")
+  poolType       String    @default("FIXED")   // "FIXED" | "DYNAMIC"
+  poolFilterCode String?   // JS body returning boolean; used when poolType = "DYNAMIC"
+  sessionId      String?   // chat session that created this rule
+  isActive       Boolean   @default(true)
+  winRate        Float?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  triggers       Trigger[]
+}
+
+model Trigger {
+  id          String   @id @default(cuid())
+  ruleId      String
+  rule        Rule     @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  symbol      String
+  signal      String
+  price       Float
+  message     String
+  triggeredAt DateTime @default(now())
+}
+
+// OHLCV bars at any interval. Stores daily ('1d') and intraday ('1m','5m','15m','30m','1h')
+// bars so backtest can iterate at the finest available granularity.
+model StockPrice {
+  id       String   @id @default(cuid())
+  symbol   String
+  date     DateTime
+  interval String   @default("1d")
+  open     Float
+  high     Float
+  low      Float
+  close    Float
+  volume   Float
+
+  @@unique([symbol, date, interval])
+  @@index([symbol, interval])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  sessionId String
+  role      String
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([sessionId])
+}
