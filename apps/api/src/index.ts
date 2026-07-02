@@ -28,7 +28,7 @@ import type { RuleConfig, TickData } from './types/rule';
 const app = express();
 const httpServer = createServer(app);
 const io = new SocketIO(httpServer, {
-  cors: { origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true },
+  cors: { origin: process.env.FRONTEND_URL, credentials: true },
 });
 
 const prisma = new PrismaClient();

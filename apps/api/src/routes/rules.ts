@@ -34,14 +34,14 @@ async function resolveDynamicSymbols(poolFilterCode: string): Promise<string[]> 
   for (const r of fixedRules) {
     for (const s of JSON.parse(r.symbols) as string[]) universe.add(s);
   }
-  const metaBySymbol = new Map(
-    metaRows.map((r) => [r.symbol, JSON.parse(r.data) as Record<string, unknown>]),
+  const metaBySymbol = new Map<string, Record<string, unknown>>(
+    metaRows.map((r): [string, Record<string, unknown>] => [r.symbol, JSON.parse(r.data) as Record<string, unknown>]),
   );
   for (const r of metaRows) universe.add(r.symbol);
 
   const matched: string[] = [];
   for (const symbol of universe) {
-    const meta = metaBySymbol.get(symbol) ?? {};
+    const meta = metaBySymbol.get(symbol) ?? ({} as Record<string, unknown>);
     if (runPoolFilter(poolFilterCode, symbol, (key) => meta[key])) {
       matched.push(symbol);
     }

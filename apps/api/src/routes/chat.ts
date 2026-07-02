@@ -36,7 +36,7 @@ router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
       distinct: ['sessionId'],
       select: { sessionId: true, content: true },
     });
-    const previewBySession = new Map(firstMessages.map((m) => [m.sessionId, m.content]));
+    const previewBySession = new Map<string, string>(firstMessages.map((m) => [m.sessionId, m.content]));
 
     // Rules connected to these sessions
     const rules = await prisma.rule.findMany({

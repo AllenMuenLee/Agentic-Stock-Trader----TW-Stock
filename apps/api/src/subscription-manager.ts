@@ -44,14 +44,14 @@ class SubscriptionManager {
         for (const s of JSON.parse(rule.symbols) as string[]) universe.add(s);
       }
     }
-    const prismaMetaMap = new Map(
-      prismaMetaRows.map((r) => [r.symbol, JSON.parse(r.data) as Record<string, unknown>]),
+    const prismaMetaMap = new Map<string, Record<string, unknown>>(
+      prismaMetaRows.map((r): [string, Record<string, unknown>] => [r.symbol, JSON.parse(r.data) as Record<string, unknown>]),
     );
     for (const { symbol } of prismaMetaRows) universe.add(symbol);
 
     const metaBySymbol = new Map<string, Record<string, unknown>>();
     for (const s of universe) {
-      metaBySymbol.set(s, prismaMetaMap.get(s) ?? {});
+      metaBySymbol.set(s, prismaMetaMap.get(s) ?? ({} as Record<string, unknown>));
     }
 
     // Build next watcher map
