@@ -14,14 +14,19 @@
     "db:cleanup": "tsx src/scripts/cleanup-db.ts"
   },
   "dependencies": {
+    "@fugle/marketdata": "^1.4.2",
     "@fugle/realtime": "^0.4.0",
     "@prisma/client": "^5.14.0",
     "@stock-notifier/shared": "*",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "axios": "^1.7.2",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "ioredis": "^5.11.1",
+    "jsonwebtoken": "^9.0.3",
     "nodemailer": "^6.9.14",
     "socket.io": "^4.7.5"
   },

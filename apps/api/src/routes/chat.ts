@@ -1,14 +1,64 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { GeminiService } from '../services/gemini.service';
+import { requireAuth } from '../middleware/auth';
 import type { ChatMessage } from '@stock-notifier/shared';
 
 const router = Router();
 const prisma = new PrismaClient();
+
+router.use(requireAuth);
+
 const gemini = new GeminiService(
   process.env.GOOGLE_API_KEY || '',
   process.env.GOOGLE_MODEL,
 );
+
+// GET /api/chat — list all sessions with preview + connected rule
+router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const sessionGroups = await prisma.chatMessage.groupBy({
+      by: ['sessionId'],
+      _count: { id: true },
+      _max: { createdAt: true },
+      _min: { createdAt: true },
+      orderBy: { _max: { createdAt: 'desc' } },
+    });
+
+    if (!sessionGroups.length) { res.json([]); return; }
+
+    const sessionIds = sessionGroups.map((s) => s.sessionId);
+
+    // First user message per session as preview text
+    const firstMessages = await prisma.chatMessage.findMany({
+      where: { sessionId: { in: sessionIds }, role: 'user' },
+      orderBy: { createdAt: 'asc' },
+      distinct: ['sessionId'],
+      select: { sessionId: true, content: true },
+    });
+    const previewBySession = new Map(firstMessages.map((m) => [m.sessionId, m.content]));
+
+    // Rules connected to these sessions
+    const rules = await prisma.rule.findMany({
+      where: { sessionId: { in: sessionIds } },
+      select: { id: true, name: true, sessionId: true, isActive: true, poolType: true },
+    });
+    const ruleBySession = new Map(rules.map((r) => [r.sessionId!, r]));
+
+    res.json(
+      sessionGroups.map((s) => ({
+        sessionId: s.sessionId,
+        messageCount: s._count.id,
+        createdAt: s._min.createdAt,
+        updatedAt: s._max.createdAt,
+        preview: (previewBySession.get(s.sessionId) ?? '').slice(0, 120),
+        rule: ruleBySession.get(s.sessionId) ?? null,
+      })),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
 
 // GET /api/chat/:sessionId — fetch conversation history
 router.get('/:sessionId', async (req: Request, res: Response, next: NextFunction) => {

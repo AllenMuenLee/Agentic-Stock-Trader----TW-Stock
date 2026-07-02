@@ -362,35 +362,65 @@ export function buildIntradayBarContext(
   const dailySlice = allDailyBars.filter((b) => b.date <= cutoffMs);
   const dailyCandles = ohlcvToCandleBars(dailySlice);
 
+  // Precompute previous-trading-day close for each date so intraday bars
+  // can report an accurate daily changePercent (gain from prev day close).
+  // Key = YYYY-MM-DD (Asia/Taipei), value = previous bar's close (or open of
+  // the first bar when there's no prior day in the loaded range).
+  const prevCloseByDate = new Map<string, number>();
+  for (let i = 0; i < allDailyBars.length; i++) {
+    const dateKey = allDailyBars[i].date.toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+    prevCloseByDate.set(dateKey, i > 0 ? allDailyBars[i - 1].close : allDailyBars[i].open);
+  }
+
+  // Binary search: find the last index in `bars` with time ≤ cutoff.
+  // O(log N) instead of O(N) filter — critical for large 1m bar arrays.
+  const bisectRight = (bars: CandleBar[], cutoff: number): number => {
+    let lo = 0, hi = bars.length - 1, idx = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (bars[mid].time <= cutoff) { idx = mid; lo = mid + 1; }
+      else hi = mid - 1;
+    }
+    return idx;
+  };
+
   const filteredBarsOf = (interval: string): CandleBar[] => {
     if (interval === '1d') return dailyCandles;
     if (interval === '1w') return dailyToWeeklyBars(dailyCandles);
-    return (intradayBars.get(interval) ?? []).filter((b) => b.time <= currentTimeSec);
+    const all = intradayBars.get(interval) ?? [];
+    const cutoffIdx = bisectRight(all, currentTimeSec);
+    return cutoffIdx >= 0 ? all.slice(0, cutoffIdx + 1) : [];
   };
 
-  // Samples for get_data: finest available intraday series filtered up to current time
+  // Build a single-element sample for the CURRENT bar only (O(log N) binary search).
+  // get_detail/get_data only need the latest value — returning the full historical
+  // array (O(N) per call × N iterations = O(N²)) killed backtest performance.
+  // get_bars/get_candle use filteredBarsOf() directly and are not affected.
   const buildSamples = (): Sample[] => {
     for (const iv of INTRADAY_PRIORITY) {
-      const bars = filteredBarsOf(iv);
-      if (bars.length > 0) {
-        return bars.map((b) => ({
-          t: b.time,
-          price: b.close,
-          volume: b.volume,
-          open: b.open,
-          high: b.high,
-          low: b.low,
-          close: b.close,
-          change: 0,
-          changePercent: 0,
-          bid: b.close,
-          ask: b.close,
-          bidVolume: 0,
-          askVolume: 0,
-        }));
+      const allBars = intradayBars.get(iv) ?? [];
+      if (!allBars.length) continue;
+      // Binary search: find the rightmost bar whose time ≤ currentTimeSec
+      let lo = 0, hi = allBars.length - 1, idx = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (allBars[mid].time <= currentTimeSec) { idx = mid; lo = mid + 1; }
+        else hi = mid - 1;
       }
+      if (idx < 0) continue;
+      const b = allBars[idx];
+      const dateKey = new Date(b.time * 1000).toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+      const prevClose = prevCloseByDate.get(dateKey) ?? b.open;
+      const change = b.close - prevClose;
+      const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
+      return [{
+        t: b.time, price: b.close, volume: b.volume, open: b.open,
+        high: b.high, low: b.low, close: b.close, change, changePercent,
+        bid: b.close, ask: b.close, bidVolume: 0, askVolume: 0,
+      }];
     }
-    return barsToSamples(dailySlice);
+    const last = barsToSamples(dailySlice).pop();
+    return last ? [last] : [];
   };
 
   const samples = buildSamples();
@@ -406,13 +436,22 @@ export function buildIntradayBarContext(
     get_meta:      ()             => undefined,
     get_bars: (s, interval, count) => {
       if (s !== symbol) return [];
-      return filteredBarsOf(interval).slice(-Math.max(0, count));
+      if (interval === '1d') return dailyCandles.slice(-Math.max(0, count));
+      if (interval === '1w') return dailyToWeeklyBars(dailyCandles).slice(-Math.max(0, count));
+      const all = intradayBars.get(interval) ?? [];
+      const cutoffIdx = bisectRight(all, currentTimeSec);
+      if (cutoffIdx < 0) return [];
+      const startIdx = Math.max(0, cutoffIdx + 1 - Math.max(0, count));
+      return all.slice(startIdx, cutoffIdx + 1);
     },
     get_candle: (s, interval, offset = 0) => {
       if (s !== symbol) return undefined;
-      const b = filteredBarsOf(interval);
-      const idx = b.length - 1 - offset;
-      return idx >= 0 ? b[idx] : undefined;
+      if (interval === '1d') { const b = dailyCandles; return b[b.length - 1 - offset]; }
+      if (interval === '1w') { const w = dailyToWeeklyBars(dailyCandles); return w[w.length - 1 - offset]; }
+      const all = intradayBars.get(interval) ?? [];
+      const cutoffIdx = bisectRight(all, currentTimeSec);
+      const idx = cutoffIdx - offset;
+      return idx >= 0 ? all[idx] : undefined;
     },
   };
 }

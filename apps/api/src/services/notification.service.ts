@@ -35,63 +35,66 @@ export class NotificationService {
     console.log(`[Notification] Email sent to ${to}`);
   }
 
-  async sendLine(token: string, payload: NotificationPayload): Promise<void> {
+  async sendLine(lineUserId: string, payload: NotificationPayload): Promise<void> {
     const { LINE_CHANNEL_ACCESS_TOKEN } = process.env;
 
-    // LINE Notify (simple token-based)
-    if (token.startsWith('notify:')) {
-      const notifyToken = token.replace('notify:', '');
-      await axios.post(
-        'https://notify-api.line.me/api/notify',
-        new URLSearchParams({ message: `\n${payload.title}\n${payload.message}` }),
-        {
-          headers: {
-            Authorization: `Bearer ${notifyToken}`,
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-        },
-      );
-      return;
-    }
-
-    // LINE Messaging API
     if (!LINE_CHANNEL_ACCESS_TOKEN) {
-      console.warn('[Notification] LINE not configured');
+      console.warn('[Notification] LINE not configured (missing LINE_CHANNEL_ACCESS_TOKEN)');
       return;
     }
 
     await axios.post(
       'https://api.line.me/v2/bot/message/push',
       {
-        to: token,
+        to: lineUserId,
         messages: [{ type: 'text', text: `${payload.title}\n${payload.message}` }],
       },
       { headers: { Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` } },
     );
 
-    console.log(`[Notification] LINE message sent`);
+    console.log(`[Notification] LINE message sent to ${lineUserId}`);
   }
 
-  async sendDiscord(webhookUrl: string, payload: NotificationPayload): Promise<void> {
+  async sendDiscordDM(discordUserId: string, payload: NotificationPayload): Promise<void> {
+    const { DISCORD_BOT_TOKEN } = process.env;
+
+    if (!DISCORD_BOT_TOKEN) {
+      console.warn('[Notification] Discord not configured (missing DISCORD_BOT_TOKEN)');
+      return;
+    }
+
     const color = payload.signal === 'BUY' ? 0x00ff00 : payload.signal === 'SELL' ? 0xff0000 : 0xffff00;
 
-    await axios.post(webhookUrl, {
-      embeds: [
-        {
-          title: payload.title,
-          description: payload.message,
-          color,
-          fields: [
-            ...(payload.symbol ? [{ name: 'Symbol', value: payload.symbol, inline: true }] : []),
-            ...(payload.signal ? [{ name: 'Signal', value: payload.signal, inline: true }] : []),
-            ...(payload.price ? [{ name: 'Price', value: `$${payload.price}`, inline: true }] : []),
-          ],
-          timestamp: new Date().toISOString(),
-        },
-      ],
-    });
+    // Create DM channel
+    const dmRes = await axios.post(
+      'https://discord.com/api/v10/users/@me/channels',
+      { recipient_id: discordUserId },
+      { headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}` } },
+    );
+    const channelId = dmRes.data.id as string;
 
-    console.log(`[Notification] Discord message sent`);
+    // Send message
+    await axios.post(
+      `https://discord.com/api/v10/channels/${channelId}/messages`,
+      {
+        embeds: [
+          {
+            title: payload.title,
+            description: payload.message,
+            color,
+            fields: [
+              ...(payload.symbol ? [{ name: 'Symbol', value: payload.symbol, inline: true }] : []),
+              ...(payload.signal ? [{ name: 'Signal', value: payload.signal, inline: true }] : []),
+              ...(payload.price ? [{ name: 'Price', value: `$${payload.price}`, inline: true }] : []),
+            ],
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      },
+      { headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}` } },
+    );
+
+    console.log(`[Notification] Discord DM sent to user ${discordUserId}`);
   }
 
   private buildEmailHtml(payload: NotificationPayload): string {
@@ -110,7 +113,7 @@ export class NotificationService {
           ${payload.price ? `<p><strong>Price:</strong> ${payload.price}</p>` : ''}
           <p style="color: #64748b;">${payload.message}</p>
           <hr style="border-color: #e2e8f0;">
-          <p style="font-size: 12px; color: #94a3b8;">Sent by Agentic Stock Notifier</p>
+          <p style="font-size: 12px; color: #94a3b8;">Sent by 智股通</p>
         </div>
       </div>
     `;

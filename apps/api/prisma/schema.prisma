@@ -8,13 +8,19 @@ datasource db {
 }
 
 model User {
-  id             String   @id @default(cuid())
-  email          String?  @unique
-  lineToken      String?
-  discordWebhook String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  rules          Rule[]
+  id                String    @id @default(cuid())
+  username          String    @unique
+  passwordHash      String
+  email             String?   @unique
+  lineUserId        String?
+  lineBindCode      String?
+  lineBindExpiry    DateTime?
+  discordUserId     String?
+  discordBindCode   String?
+  discordBindExpiry DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  rules             Rule[]
 }
 
 model Rule {
@@ -61,6 +67,15 @@ model StockPrice {
 
   @@unique([symbol, date, interval])
   @@index([symbol, interval])
+}
+
+// Per-symbol metadata (sector, name, dayTradeable, etc.) written by the startup
+// seed and ingest jobs. Pool filter code reads from here during backtest so
+// the evaluation is fully Redis-free.
+model SymbolMeta {
+  symbol    String   @id
+  data      String   // JSON blob — arbitrary key/value pairs
+  updatedAt DateTime @updatedAt
 }
 
 model ChatMessage {

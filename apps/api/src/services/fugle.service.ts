@@ -24,9 +24,37 @@ export class FugleService extends EventEmitter {
     }
 
     try {
-      const { WebSocketClient } = await import('@fugle/realtime');
-      this.client = new WebSocketClient({ apiToken: this.apiKey });
-      console.log('[Fugle] WebSocketClient ready');
+      const { WebSocketClient } = await import('@fugle/marketdata');
+      this.client = new WebSocketClient({ apiKey: this.apiKey });
+      
+      const wsClient = this.client as any;
+      wsClient.stock.on('message', (msg: unknown) => {
+        try {
+          const parsed = typeof msg === 'string' ? JSON.parse(msg) : msg as Record<string, unknown>;
+          if (!parsed || typeof parsed !== 'object') return;
+
+          // Log any error event from Fugle (e.g. subscription limit exceeded)
+          if (parsed.event === 'error' || parsed.type === 'error') {
+            console.error('[Fugle] Server error event:', JSON.stringify(parsed));
+            return;
+          }
+
+          if (parsed.data && typeof (parsed.data as Record<string, unknown>).symbol === 'string') {
+            this.handleFugleMessage((parsed.data as Record<string, unknown>).symbol as string, parsed);
+          }
+        } catch {}
+      });
+
+      wsClient.stock.on('error', (err: unknown) => {
+        console.error('[Fugle] WebSocket error:', err);
+      });
+
+      wsClient.stock.on('close', (code: number, reason: string) => {
+        console.warn(`[Fugle] WebSocket closed — code: ${code}, reason: ${reason || '(none)'}`);
+      });
+
+      await wsClient.stock.connect();
+      console.log('[Fugle] WebSocketClient connected and ready');
     } catch (error) {
       console.warn('[Fugle] SDK unavailable, using simulation mode:', error);
       this.isSimulation = true;
@@ -37,32 +65,13 @@ export class FugleService extends EventEmitter {
   subscribe(symbol: string): void {
     if (this.subscribedSymbols.has(symbol)) return;
     this.subscribedSymbols.add(symbol);
-    console.log(`[Fugle] Subscribed to ${symbol}. Current subscriptions: ${Array.from(this.subscribedSymbols).join(', ')}`);
-
 
     if (!this.client || this.isSimulation) return;
 
     try {
-      const fugleClient = this.client as {
-        intraday: {
-          quote: (p: { symbolId: string }) => {
-            on: (event: string, cb: (data: unknown) => void) => void;
-          };
-        };
-      };
-
-      const ws = fugleClient.intraday.quote({ symbolId: symbol });
-
-      ws.on('message', (rawData: unknown) => {
-        this.handleFugleMessage(symbol, rawData);
-      });
-
-      ws.on('error', (err: unknown) => {
-        console.error(`[Fugle] WebSocket error for ${symbol}:`, err);
-      });
-
-      this.wsConnections.set(symbol, ws);
-      console.log(`[Fugle] Subscribed to ${symbol}`);
+      const wsClient = this.client as any;
+      wsClient.stock.subscribe({ channel: 'quotes', symbol });
+      wsClient.stock.subscribe({ channel: 'trades', symbol });
     } catch (e) {
       console.error(`[Fugle] Failed to subscribe ${symbol}:`, e);
     }
@@ -72,14 +81,13 @@ export class FugleService extends EventEmitter {
     if (!this.subscribedSymbols.has(symbol)) return;
     this.subscribedSymbols.delete(symbol);
     console.log(`[Fugle] Unsubscribed from ${symbol}. Current subscriptions: ${Array.from(this.subscribedSymbols).join(', ')}`);
-    const ws = this.wsConnections.get(symbol);
-    if (ws) {
-      try {
-        (ws as { close?: () => void }).close?.();
-      } catch {
-        // ignore
-      }
-      this.wsConnections.delete(symbol);
+    if (!this.client || this.isSimulation) return;
+    try {
+      const wsClient = this.client as any;
+      wsClient.stock.unsubscribe({ channel: 'quotes', symbol });
+      wsClient.stock.unsubscribe({ channel: 'trades', symbol });
+    } catch {
+      // ignore
     }
   }
 
@@ -90,26 +98,36 @@ export class FugleService extends EventEmitter {
   private handleFugleMessage(symbol: string, rawData: unknown): void {
     try {
       const msg = (typeof rawData === 'string' ? JSON.parse(rawData) : rawData) as Record<string, unknown>;
-      if (!msg?.data) return;
+      
+      let data = msg;
+      if (msg && typeof msg === 'object' && 'event' in msg && 'data' in msg) {
+        data = msg.data as Record<string, unknown>;
+      } else if (msg && typeof msg === 'object' && 'data' in msg && 'info' in msg) {
+        data = (msg.data as any).quote || msg.data;
+      }
+      if (!data) return;
 
-      const data = msg.data as Record<string, unknown>;
-      const bids = (data.bids ?? data.bid) as { price?: number; size?: number }[] | undefined;
-      const asks = (data.asks ?? data.ask) as { price?: number; size?: number }[] | undefined;
+      const bids = (data.bids ?? data.bid) as any;
+      const asks = (data.asks ?? data.ask) as any;
+      
+      const priceVal = Number(data.price ?? data.lastPrice ?? data.closePrice ?? 0);
+      const volumeVal = Number(data.volume ?? (data.total as any)?.tradeVolume ?? 0);
+
       const tick: TickData = {
         symbol,
-        price: Number(data.closePrice ?? data.price ?? 0),
-        volume: Number(data.volume ?? 0),
+        price: priceVal,
+        volume: volumeVal,
         timestamp: new Date(),
         open: Number(data.openPrice) || undefined,
         high: Number(data.highPrice) || undefined,
         low: Number(data.lowPrice) || undefined,
-        close: Number(data.closePrice) || undefined,
+        close: Number(data.closePrice ?? data.lastPrice ?? data.price) || undefined,
         change: Number(data.change) || undefined,
         changePercent: Number(data.changePercent) || undefined,
-        bid: Number(bids?.[0]?.price ?? data.bidPrice) || undefined,
-        ask: Number(asks?.[0]?.price ?? data.askPrice) || undefined,
-        bidVolume: Number(bids?.[0]?.size ?? data.bidVolume) || undefined,
-        askVolume: Number(asks?.[0]?.size ?? data.askVolume) || undefined,
+        bid: Number(Array.isArray(bids) ? bids[0]?.price : bids) || undefined,
+        ask: Number(Array.isArray(asks) ? asks[0]?.price : asks) || undefined,
+        bidVolume: Number(Array.isArray(bids) ? bids[0]?.size : (data.bidVolume || data.bidSize)) || undefined,
+        askVolume: Number(Array.isArray(asks) ? asks[0]?.size : (data.askVolume || data.askSize)) || undefined,
       };
 
       if (tick.price > 0) this.emit('tick', tick);
@@ -131,8 +149,14 @@ export class FugleService extends EventEmitter {
 
     const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+    // In simulation mode only tick a capped set of symbols so we don't flood
+    // the DB with 1000+ concurrent rule-evaluation queries every 5 seconds.
+    const SIM_MAX_SYMBOLS = 20;
+    const FIXED_SIM = ['2330', '2317', '0050'];
+
     setInterval(() => {
-      const allSymbols = new Set([...this.subscribedSymbols, '2330', '2317', '0050']);
+      const extras = [...this.subscribedSymbols].filter((s) => !FIXED_SIM.includes(s)).slice(0, SIM_MAX_SYMBOLS - FIXED_SIM.length);
+      const allSymbols = new Set([...FIXED_SIM, ...extras]);
       for (const symbol of allSymbols) {
         if (sessionOpen[symbol] === undefined) sessionOpen[symbol] = 100;
         const open = sessionOpen[symbol];

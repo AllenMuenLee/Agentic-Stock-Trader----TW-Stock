@@ -4,19 +4,25 @@ import cors from 'cors';
 import { createServer } from 'http';
 import { Server as SocketIO } from 'socket.io';
 import { PrismaClient } from '@prisma/client';
+import jwt from 'jsonwebtoken';
 
 import chatRouter from './routes/chat';
 import rulesRouter from './routes/rules';
 import settingsRouter from './routes/settings';
 import stocksRouter from './routes/stocks';
+import authRouter from './routes/auth';
+import bindRouter from './routes/bind';
+import webhooksRouter from './routes/webhooks';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'stock-notifier-secret-key';
 
 import { FugleService } from './services/fugle.service';
 import { NotificationService } from './services/notification.service';
 import { RuleEngine } from './engine/rule-engine';
 import { loadDataContext } from './engine/data-context';
 import { runPoolFilter } from './engine/sandbox';
-import { RedisService } from './services/redis.service';
-import { YFinanceService } from './services/yfinance.service';
+import { initSubscriptionManager, refreshSubscriptions, getTrackedSubscriptions } from './subscription-manager';
+import { redis, yfinance } from './singletons';
 import type { RuleConfig, TickData } from './types/rule';
 
 const app = express();
@@ -29,18 +35,19 @@ const prisma = new PrismaClient();
 const fugle = new FugleService(process.env.FUGLE_API_KEY || '');
 const notifier = new NotificationService();
 const ruleEngine = new RuleEngine();
-const yfinance = new YFinanceService();
-const redis = new RedisService();
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }));
 app.use(express.json());
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
+app.use('/api/auth', authRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/rules', rulesRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/stocks', stocksRouter);
+app.use('/api/bind', bindRouter);
+app.use('/api/webhooks', webhooksRouter);
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
@@ -54,9 +61,27 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   }
 });
 
+// ─── Socket.IO auth middleware (optional — unauthenticated sockets still receive tick data)
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token as string | undefined;
+  if (token) {
+    try {
+      const raw = token.startsWith('Bearer ') ? token.slice(7) : token;
+      const payload = jwt.verify(raw, JWT_SECRET) as { id: string; username: string };
+      socket.data.userId = payload.id;
+    } catch { /* unauthenticated — tick feed still works */ }
+  }
+  next();
+});
+
 // ─── Socket.IO real-time feed ─────────────────────────────────────────────────
 io.on('connection', (socket) => {
   console.log(`[Socket] Client connected: ${socket.id}`);
+
+  // Join user-specific room for signal notifications
+  if (socket.data.userId) {
+    socket.join(`user:${socket.data.userId as string}`);
+  }
 
   socket.on('subscribe', (symbols: string[]) => {
     symbols.forEach((s) => fugle.subscribe(s));
@@ -152,8 +177,7 @@ fugle.onTick(async (tick: TickData) => {
         },
       });
 
-      // Emit to connected clients
-      io.emit('signal', {
+      const signalPayload = {
         ruleId: rule.id,
         ruleName: rule.name,
         triggerId: trigger.id,
@@ -162,9 +186,13 @@ fugle.onTick(async (tick: TickData) => {
         price: tick.price,
         message: result.message,
         triggeredAt: trigger.triggeredAt.toISOString(),
-      });
+      };
 
-      // Send notifications
+      // Broadcast to all dashboard clients + authenticated user's room
+      io.emit('signal', signalPayload);
+      io.to(`user:${rule.userId}`).emit('notification', signalPayload);
+
+      // Send push notifications
       const payload = {
         title: `${result.signal} Signal: ${tick.symbol}`,
         message: result.message!,
@@ -176,11 +204,11 @@ fugle.onTick(async (tick: TickData) => {
       if (rule.user.email) {
         notifier.sendEmail(rule.user.email, payload).catch(console.error);
       }
-      if (rule.user.lineToken) {
-        notifier.sendLine(rule.user.lineToken, payload).catch(console.error);
+      if (rule.user.lineUserId) {
+        notifier.sendLine(rule.user.lineUserId, payload).catch(console.error);
       }
-      if (rule.user.discordWebhook) {
-        notifier.sendDiscord(rule.user.discordWebhook, payload).catch(console.error);
+      if (rule.user.discordUserId) {
+        notifier.sendDiscordDM(rule.user.discordUserId, payload).catch(console.error);
       }
 
       console.log(`[Engine] Rule "${rule.name}" triggered: ${result.message}`);
@@ -192,24 +220,13 @@ fugle.onTick(async (tick: TickData) => {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Returns every symbol referenced in any FIXED rule plus the 3 seeded defaults. */
-async function getTrackedSymbols(): Promise<string[]> {
-  const base = ['2330', '2317', '0050'];
-  const rules = await prisma.rule.findMany();
-  for (const rule of rules) {
-    if ((rule.poolType ?? 'FIXED') === 'FIXED') {
-      base.push(...(JSON.parse(rule.symbols) as string[]));
-    }
-  }
-  return [...new Set(base)];
-}
-
 /**
  * Seeds 100 days of daily + all intraday intervals for every tracked symbol.
+ * Called after refreshSubscriptions() so getTrackedSubscriptions() is populated.
  * Runs sequentially per symbol so SQLite is never overwhelmed.
  */
 async function seedHistoricalData(): Promise<void> {
-  const symbols = await getTrackedSymbols();
+  const symbols = getTrackedSubscriptions();
   console.log('[Startup] Seeding all intervals for:', symbols.join(', '));
   for (const symbol of symbols) {
     try {
@@ -230,7 +247,9 @@ async function seedHistoricalData(): Promise<void> {
 function scheduleDailyRefresh(): void {
   const run = async () => {
     try {
-      const symbols = await getTrackedSymbols();
+      // Re-evaluate subscriptions first so any overnight rule changes are picked up.
+      await refreshSubscriptions();
+      const symbols = getTrackedSubscriptions();
       console.log('[Daily] Refreshing all bar intervals for:', symbols.join(', '));
       await yfinance.refreshAllBars(symbols);
     } catch (err) {
@@ -257,26 +276,54 @@ httpServer.listen(PORT, async () => {
   console.log(`[API] Server running on http://localhost:${PORT}`);
 
   // Seed per-symbol metadata (當沖 eligibility, names) so get_meta() works out of
-  // the box. In production this would be ingested from a reference data source.
+  // the box. Written to both Redis (live rule evaluation) and Prisma (backtest).
   const seedMeta: Record<string, Record<string, unknown>> = {
     '2330': { name: '台積電', dayTradeable: true, sector: 'Semiconductors' },
     '2317': { name: '鴻海', dayTradeable: true, sector: 'Electronics' },
     '0050': { name: '元大台灣50', dayTradeable: false, sector: 'ETF' },
   };
-  await Promise.all(Object.entries(seedMeta).map(([sym, m]) => redis.setMeta(sym, m)));
+  await Promise.all(
+    Object.entries(seedMeta).map(([sym, m]) =>
+      Promise.all([
+        redis.setMeta(sym, m),
+        prisma.symbolMeta.upsert({
+          where: { symbol: sym },
+          create: { symbol: sym, data: JSON.stringify(m) },
+          update: { data: JSON.stringify(m) },
+        }),
+      ]),
+    ),
+  );
 
-  // Seed 100 days of daily + all intraday intervals for all tracked (rule) symbols
-  seedHistoricalData().catch((err) => console.error('[Startup] Seed failed:', err));
+  // Backfill SymbolMeta from StockPrice so pool filters can look up all known symbols
+  // without running a slow SELECT DISTINCT over 994K rows every request.
+  // Skip if already populated (count check is O(1) — avoids blocking restarts).
+  const metaCount = await prisma.symbolMeta.count();
+  if (metaCount < 10) {
+    await prisma.$executeRaw`
+      INSERT OR IGNORE INTO "SymbolMeta" (symbol, data, updatedAt)
+      SELECT DISTINCT symbol, '{}', datetime('now') FROM "StockPrice"
+    `;
+    console.log('[Startup] SymbolMeta registry synced from StockPrice');
+  } else {
+    console.log(`[Startup] SymbolMeta already has ${metaCount} entries — skipping backfill`);
+  }
 
-  // Schedule daily SQL refresh + cleanup at midnight
-  scheduleDailyRefresh();
-
+  // 2. Connect Fugle WebSocket (or start simulation).
   await fugle.connect();
 
-  // Auto-subscribe to all actively tracked symbols for background rules
-  const symbolsToTrack = await getTrackedSymbols();
-  console.log(`[Startup] Auto-subscribing to ${symbolsToTrack.length} tracked symbols...`);
-  symbolsToTrack.forEach((s) => fugle.subscribe(s));
+  // 3. Init subscription manager and subscribe to all symbols needed by active rules.
+  //    DYNAMIC pool filters are evaluated against the seeded universe so Fugle
+  //    receives the correct symbol list before the first tick arrives.
+  initSubscriptionManager(prisma, fugle, redis, yfinance);
+  await refreshSubscriptions();
+
+  // 4. Seed 100 days of historical data for every currently-tracked symbol.
+  //    Must run after refreshSubscriptions() so getTrackedSubscriptions() is populated.
+  seedHistoricalData().catch((err) => console.error('[Startup] Seed failed:', err));
+
+  // 5. Schedule daily SQL refresh + subscription re-evaluation at midnight.
+  scheduleDailyRefresh();
 });
 
 process.on('SIGINT', async () => {

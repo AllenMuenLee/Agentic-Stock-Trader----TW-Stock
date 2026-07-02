@@ -59,11 +59,23 @@ function validateResult(value: unknown): SandboxOutcome {
   return { result: { signal: signal as Signal, message } };
 }
 
+// Cache compiled pool filter scripts so we don't pay vm.Script compilation
+// cost for every symbol when a DYNAMIC pool has thousands of candidates.
+const poolFilterCache = new Map<string, { script: vm.Script; ctx: vm.Context; sandbox: Record<string, unknown> }>();
+
+// Cache compiled rule scripts for the same reason — a backtest evaluates the
+// same rule code across hundreds of symbols × thousands of bars, so compiling
+// once and reusing the context (with per-call sandbox updates) is a large win.
+const ruleScriptCache = new Map<string, { script: vm.Script; ctx: vm.Context; sandbox: Record<string, unknown> }>();
+
 /**
  * Evaluates a pool filter code body to decide if a symbol belongs in a dynamic pool.
  *
  * The body receives `stock` and `get_meta` and must return a boolean (truthy/falsy).
  * Example: `return get_meta(stock, 'sector') === 'Semiconductors';`
+ *
+ * The Script is compiled once per unique filterCode and the context is reused
+ * across symbol evaluations — stock/get_meta are swapped per call.
  */
 export function runPoolFilter(
   filterCode: string,
@@ -73,20 +85,29 @@ export function runPoolFilter(
   const forbidden = staticCheck(filterCode);
   if (forbidden) return false;
 
-  const sandbox: Record<string, unknown> = Object.create(null);
-  sandbox.stock = stock;
-  sandbox.get_meta = (_s: string, key: string) => getMeta(key);
-  sandbox.Math = Math;
-  sandbox.String = String;
-  sandbox.Boolean = Boolean;
-  sandbox.Number = Number;
+  let entry = poolFilterCache.get(filterCode);
+  if (!entry) {
+    const sandbox: Record<string, unknown> = Object.create(null);
+    sandbox.Math = Math;
+    sandbox.String = String;
+    sandbox.Boolean = Boolean;
+    sandbox.Number = Number;
+    const wrapped = `(function() {\n"use strict";\n${filterCode}\n})()`;
+    try {
+      const script = new vm.Script(wrapped, { filename: 'pool-filter.js' });
+      const ctx = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });
+      entry = { script, ctx, sandbox };
+      poolFilterCache.set(filterCode, entry);
+    } catch {
+      return false;
+    }
+  }
 
-  const wrapped = `(function() {\n"use strict";\n${filterCode}\n})()`;
+  entry.sandbox.stock = stock;
+  entry.sandbox.get_meta = (_s: string, key: string) => getMeta(key);
 
   try {
-    const script = new vm.Script(wrapped, { filename: 'pool-filter.js' });
-    const ctx = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });
-    const value = script.runInContext(ctx, { timeout: 100, breakOnSigint: true });
+    const value = entry.script.runInContext(entry.ctx, { timeout: 100, breakOnSigint: true });
     return Boolean(value);
   } catch {
     return false;
@@ -107,34 +128,48 @@ export function runRuleCode(code: string, context: DataContext): SandboxOutcome 
   const forbidden = staticCheck(code);
   if (forbidden) return { result: null, error: forbidden };
 
-  // Minimal, frozen global surface. No prototype chain to host objects.
-  const sandbox: Record<string, unknown> = Object.create(null);
-  sandbox.get_data = (stock: string, feature: string, start: number, end: number) =>
-    context.get_data(stock, feature, start, end);
-  sandbox.get_detail = (stock: string, feature: string) => context.get_detail(stock, feature);
-  sandbox.get_price = (stock: string) => context.get_price(stock);
-  sandbox.get_indicator = (stock: string, name: string, params?: Record<string, number>) =>
-    context.get_indicator(stock, name, params);
-  sandbox.get_meta = (stock: string, key: string) => context.get_meta(stock, key);
-  sandbox.get_bars = (stock: string, interval: string, count: number) =>
-    context.get_bars(stock, interval, count);
-  sandbox.get_candle = (stock: string, interval: string, offset?: number) =>
-    context.get_candle(stock, interval, offset);
-  sandbox.stock = context.stock;
-  sandbox.curr_time = context.curr_time;
-  sandbox.Math = Math;
-  sandbox.Number = Number;
-  sandbox.JSON = JSON;
-  sandbox.console = { log: () => {}, error: () => {}, warn: () => {} };
+  let entry = ruleScriptCache.get(code);
+  if (!entry) {
+    const sandbox: Record<string, unknown> = Object.create(null);
+    sandbox.Math = Math;
+    sandbox.Number = Number;
+    sandbox.JSON = JSON;
+    sandbox.console = { log: () => {}, error: () => {}, warn: () => {} };
+    // Placeholders — overwritten per call below before execution
+    sandbox.get_data = null; sandbox.get_detail = null; sandbox.get_price = null;
+    sandbox.get_indicator = null; sandbox.get_meta = null;
+    sandbox.get_bars = null; sandbox.get_candle = null;
+    sandbox.stock = null; sandbox.curr_time = null;
 
-  const wrapped = `(function() {\n"use strict";\n${code}\n})()`;
+    const wrapped = `(function() {\n"use strict";\n${code}\n})()`;
+    try {
+      const script = new vm.Script(wrapped, { filename: 'rule.js' });
+      const ctx = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });
+      entry = { script, ctx, sandbox };
+      ruleScriptCache.set(code, entry);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { result: null, error: `Rule syntax error: ${msg}` };
+    }
+  }
+
+  // Bind this call's DataContext into the cached sandbox before running
+  entry.sandbox.get_data = (stock: string, feature: string, start: number, end: number) =>
+    context.get_data(stock, feature, start, end);
+  entry.sandbox.get_detail = (stock: string, feature: string) => context.get_detail(stock, feature);
+  entry.sandbox.get_price = (stock: string) => context.get_price(stock);
+  entry.sandbox.get_indicator = (stock: string, name: string, params?: Record<string, number>) =>
+    context.get_indicator(stock, name, params);
+  entry.sandbox.get_meta = (stock: string, key: string) => context.get_meta(stock, key);
+  entry.sandbox.get_bars = (stock: string, interval: string, count: number) =>
+    context.get_bars(stock, interval, count);
+  entry.sandbox.get_candle = (stock: string, interval: string, offset?: number) =>
+    context.get_candle(stock, interval, offset);
+  entry.sandbox.stock = context.stock;
+  entry.sandbox.curr_time = context.curr_time;
 
   try {
-    const script = new vm.Script(wrapped, { filename: 'rule.js' });
-    const ctx = vm.createContext(sandbox, {
-      codeGeneration: { strings: false, wasm: false },
-    });
-    const value = script.runInContext(ctx, {
+    const value = entry.script.runInContext(entry.ctx, {
       timeout: EXECUTION_TIMEOUT_MS,
       breakOnSigint: true,
     });

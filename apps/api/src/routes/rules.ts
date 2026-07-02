@@ -1,28 +1,60 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
 import type { CreateRuleDto, RuleConfig, PoolType } from '@stock-notifier/shared';
-import { YFinanceService } from '../services/yfinance.service';
+import { runPoolFilter } from '../engine/sandbox';
+import { refreshSubscriptions } from '../subscription-manager';
+import { yfinance } from '../singletons';
+import { requireAuth } from '../middleware/auth';
 
 const router = Router();
 const prisma = new PrismaClient();
-const yfinance = new YFinanceService();
 
-const DEFAULT_USER_ID = 'default-user';
+router.use(requireAuth);
 
-async function ensureDefaultUser() {
-  await prisma.user.upsert({
-    where: { id: DEFAULT_USER_ID },
-    create: { id: DEFAULT_USER_ID },
-    update: {},
-  });
+// Same defaults the SubscriptionManager uses — keep in sync with subscription-manager.ts
+const SEEDED_SYMBOLS = ['2330', '2317', '0050'];
+
+
+/**
+ * For a DYNAMIC rule, evaluates poolFilterCode against a broad universe of
+ * symbols: the 3 seeded defaults + all FIXED-rule symbols + any symbol already
+ * in StockPrice. Matched symbols with no historical data are seeded on-demand
+ * so the backtest can proceed immediately.
+ */
+async function resolveDynamicSymbols(poolFilterCode: string): Promise<string[]> {
+  // Build universe from SymbolMeta (small table, fast) + FIXED-rule symbols.
+  // SymbolMeta is backfilled from StockPrice on startup and updated by seedAllIntervals
+  // so it always reflects the full set of known symbols without a slow DISTINCT scan.
+  const [fixedRules, metaRows] = await Promise.all([
+    prisma.rule.findMany({ where: { poolType: 'FIXED' }, select: { symbols: true } }),
+    prisma.symbolMeta.findMany({ select: { symbol: true, data: true } }),
+  ]);
+
+  const universe = new Set<string>(SEEDED_SYMBOLS);
+  for (const r of fixedRules) {
+    for (const s of JSON.parse(r.symbols) as string[]) universe.add(s);
+  }
+  const metaBySymbol = new Map(
+    metaRows.map((r) => [r.symbol, JSON.parse(r.data) as Record<string, unknown>]),
+  );
+  for (const r of metaRows) universe.add(r.symbol);
+
+  const matched: string[] = [];
+  for (const symbol of universe) {
+    const meta = metaBySymbol.get(symbol) ?? {};
+    if (runPoolFilter(poolFilterCode, symbol, (key) => meta[key])) {
+      matched.push(symbol);
+    }
+  }
+
+  return matched;
 }
 
 // GET /api/rules
-router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
+router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    await ensureDefaultUser();
     const rules = await prisma.rule.findMany({
-      where: { userId: DEFAULT_USER_ID },
+      where: { userId: req.user!.id },
       include: { triggers: { orderBy: { triggeredAt: 'desc' }, take: 10 } },
       orderBy: { createdAt: 'desc' },
     });
@@ -60,7 +92,6 @@ router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
 // POST /api/rules
 router.post('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    await ensureDefaultUser();
     const dto = req.body as CreateRuleDto;
 
     const poolType = dto.poolType ?? 'FIXED';
@@ -82,10 +113,11 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
         poolType,
         poolFilterCode: dto.poolFilterCode ?? null,
         sessionId: dto.sessionId || null,
-        userId: DEFAULT_USER_ID,
+        userId: req.user!.id,
       },
     });
 
+    refreshSubscriptions().catch(console.error);
     res.status(201).json({ id: rule.id, name: rule.name });
   } catch (err) {
     next(err);
@@ -103,6 +135,7 @@ router.patch('/:id/toggle', async (req: Request, res: Response, next: NextFuncti
       data: { isActive: !rule.isActive },
     });
 
+    refreshSubscriptions().catch(console.error);
     res.json({ isActive: updated.isActive });
   } catch (err) {
     next(err);
@@ -135,6 +168,7 @@ router.patch('/:id', async (req: Request, res: Response, next: NextFunction) => 
       },
     });
 
+    refreshSubscriptions().catch(console.error);
     res.json({
       id: updated.id,
       poolType: updated.poolType,
@@ -150,6 +184,7 @@ router.patch('/:id', async (req: Request, res: Response, next: NextFunction) => 
 router.delete('/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
     await prisma.rule.delete({ where: { id: req.params.id } });
+    refreshSubscriptions().catch(console.error);
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -162,18 +197,21 @@ router.get('/:id/available-dates', async (req: Request, res: Response, next: Nex
     const rule = await prisma.rule.findUnique({ where: { id: req.params.id } });
     if (!rule) { res.status(404).json({ error: 'Rule not found' }); return; }
 
-    const symbols = JSON.parse(rule.symbols) as string[];
-    const ranges = await Promise.all(symbols.map((s) => yfinance.getAvailableDateRange(s)));
-    const valid = ranges.filter((r): r is NonNullable<typeof r> => r !== null);
+    let symbols: string[];
+    if ((rule.poolType ?? 'FIXED') === 'DYNAMIC' && rule.poolFilterCode) {
+      symbols = await resolveDynamicSymbols(rule.poolFilterCode);
+    } else {
+      symbols = JSON.parse(rule.symbols) as string[];
+    }
 
-    if (!valid.length) {
+    // Single aggregate query (union) — far faster than one query per symbol
+    const range = await yfinance.getAvailableDateRangeForSymbols(symbols);
+    if (!range) {
       res.json({ minDate: null, maxDate: null });
       return;
     }
 
-    // Intersection: latest min date, earliest max date
-    let minDate = valid.reduce((a, b) => (a.minDate > b.minDate ? a : b)).minDate;
-    const maxDate = valid.reduce((a, b) => (a.maxDate < b.maxDate ? a : b)).maxDate;
+    let { minDate, maxDate } = range;
 
     // Hard cap: at most 100 days back
     const cutoff = new Date();
@@ -199,7 +237,21 @@ router.post('/:id/backtest', async (req: Request, res: Response, next: NextFunct
     if (!rule) { res.status(404).json({ error: 'Rule not found' }); return; }
 
     const config = JSON.parse(rule.config) as RuleConfig;
-    const symbols = JSON.parse(rule.symbols) as string[];
+    const DYNAMIC_BACKTEST_CAP = 200;
+    let symbols: string[];
+    if ((rule.poolType ?? 'FIXED') === 'DYNAMIC' && rule.poolFilterCode) {
+      const all = await resolveDynamicSymbols(rule.poolFilterCode);
+      if (!all.length) {
+        res.status(400).json({ error: 'No symbols matched the dynamic pool filter. Check that stock metadata (sector, name, etc.) has been seeded.' });
+        return;
+      }
+      if (all.length > DYNAMIC_BACKTEST_CAP) {
+        console.warn(`[Backtest] DYNAMIC pool has ${all.length} symbols — capping to first ${DYNAMIC_BACKTEST_CAP}`);
+      }
+      symbols = all.slice(0, DYNAMIC_BACKTEST_CAP);
+    } else {
+      symbols = JSON.parse(rule.symbols) as string[];
+    }
 
     const { startDate: rawStart, endDate: rawEnd, days: rawDays } = req.body as {
       startDate?: string;

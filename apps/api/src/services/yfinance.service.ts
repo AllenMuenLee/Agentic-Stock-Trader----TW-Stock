@@ -100,6 +100,29 @@ export class YFinanceService {
     return null;
   }
 
+  /**
+   * Returns the union date range across a list of symbols — a single aggregate query
+   * instead of one per symbol. Used by the available-dates endpoint so it stays fast
+   * even when the pool contains thousands of symbols.
+   */
+  async getAvailableDateRangeForSymbols(symbols: string[]): Promise<{ minDate: string; maxDate: string } | null> {
+    if (!symbols.length) return null;
+    for (const { interval } of [...INTRADAY_INTERVALS].reverse()) {
+      const agg = await prisma.stockPrice.aggregate({
+        where: { symbol: { in: symbols }, interval },
+        _min: { date: true },
+        _max: { date: true },
+      });
+      if (agg._min.date && agg._max.date) {
+        return {
+          minDate: toTaiwanDate(agg._min.date),
+          maxDate: toTaiwanDate(agg._max.date),
+        };
+      }
+    }
+    return null;
+  }
+
   /** Returns all intraday SQL bars for a symbol in the date range, keyed by interval. */
   async getAllIntradayBarsFromSQL(
     symbol: string,
@@ -128,12 +151,29 @@ export class YFinanceService {
   }
 
   /**
-   * Seeds 1m bars for a symbol. Daily bars are derived on-the-fly; no separate 1d fetch needed.
+   * Seeds historical bars for a symbol, per interval. Skips any interval that
+   * already has data within the fetch window so restarts and duplicate calls
+   * are cheap. Call this from startup, SubscriptionManager, and on-demand
+   * backtest seeding — it is safe to call multiple times.
    */
   async seedAllIntervals(symbol: string): Promise<void> {
     for (const { interval, maxDays } of INTRADAY_INTERVALS) {
+      const since = new Date(Date.now() - maxDays * 86400000);
+      const existing = await prisma.stockPrice.count({
+        where: { symbol, interval, date: { gte: since } },
+      });
+      if (existing > 0) {
+        console.log(`[YFinance] ${symbol} ${interval}: ${existing} bars already cached — skip`);
+        continue;
+      }
       await this.fetchAndCacheIntradayToSQL(symbol, interval, maxDays);
     }
+    // Register in SymbolMeta (don't overwrite richer data written at startup)
+    await prisma.symbolMeta.upsert({
+      where: { symbol },
+      create: { symbol, data: '{}' },
+      update: {},
+    });
   }
 
   /**
@@ -315,6 +355,56 @@ export class YFinanceService {
     }
   }
 
+  /**
+   * Loads backtest data for all symbols in one bulk SQL query, then partitions
+   * the results in memory. Avoids N×2 sequential queries (old: 400 for 200 symbols).
+   */
+  async getBacktestDataBulk(
+    symbols: string[],
+    startDate: Date,
+    endDate: Date,
+  ): Promise<Map<string, { dailyBars: OHLCVBar[]; intradayBars: Map<string, CandleBar[]> }>> {
+    if (!symbols.length) return new Map();
+    const end = toEndOfDay(endDate);
+
+    const rows = await prisma.stockPrice.findMany({
+      where: { symbol: { in: symbols }, date: { gte: startDate, lte: end } },
+      orderBy: [{ symbol: 'asc' }, { interval: 'asc' }, { date: 'asc' }],
+    });
+
+    const result = new Map<string, { dailyBars: OHLCVBar[]; intradayBars: Map<string, CandleBar[]> }>();
+
+    for (const row of rows) {
+      if (!result.has(row.symbol)) {
+        result.set(row.symbol, { dailyBars: [], intradayBars: new Map() });
+      }
+      const entry = result.get(row.symbol)!;
+      if (row.interval !== '1d') {
+        const bar: CandleBar = {
+          time: Math.floor(row.date.getTime() / 1000),
+          open: row.open, high: row.high, low: row.low,
+          close: row.close, volume: row.volume,
+        };
+        const list = entry.intradayBars.get(row.interval) ?? [];
+        list.push(bar);
+        entry.intradayBars.set(row.interval, list);
+      }
+    }
+
+    // Derive daily bars from finest intraday data for each symbol
+    for (const [symbol, entry] of result) {
+      for (const { interval } of [...INTRADAY_INTERVALS].reverse()) {
+        const bars = entry.intradayBars.get(interval);
+        if (bars && bars.length >= 5) {
+          entry.dailyBars = aggregateIntradayToDaily(symbol, bars);
+          break;
+        }
+      }
+    }
+
+    return result;
+  }
+
   async runBacktest(
     config: import('../types/rule.js').RuleConfig,
     symbols: string[],
@@ -330,7 +420,7 @@ export class YFinanceService {
 
     const endDate = typeof options === 'number' ? new Date() : (() => {
       const d = new Date(options.endDate);
-      d.setUTCHours(23, 59, 59, 999); // include all bars on the end date
+      d.setUTCHours(23, 59, 59, 999);
       return d;
     })();
     const startDate =
@@ -338,34 +428,23 @@ export class YFinanceService {
         ? new Date(endDate.getTime() - options * 86400000)
         : new Date(options.startDate);
 
+    // ── Single bulk query for all symbols — avoids N×2 sequential DB round-trips
+    console.log(`[Backtest] Loading data for ${symbols.length} symbols...`);
+    const bulkData = await this.getBacktestDataBulk(symbols, startDate, endDate);
+    console.log(`[Backtest] Loaded ${bulkData.size} symbols with data`);
+
     let totalSignals = 0;
     let winCount = 0;
     const signals: import('@stock-notifier/shared').BacktestResult['signals'] = [];
     const loggedErrors = new Set<string>();
 
     for (const symbol of symbols) {
-      // ── 1. Load daily bars ─────────────────────────────────────────────────
-      const dailyBars =
-        typeof options === 'number'
-          ? await this.getHistoricalBars(symbol, options)
-          : await this.getSqlBarsByRange(symbol, options.startDate, options.endDate);
-      if (dailyBars.length < 5) continue;
+      const data = bulkData.get(symbol);
+      if (!data || data.dailyBars.length < 5) continue;
 
-      // ── 2. Load intraday bars from SQL; seed on-the-fly if missing ─────────
-      let intradaySQLBars = await this.getAllIntradayBarsFromSQL(symbol, startDate, endDate);
-      const hasAnyIntraday = INTRADAY_INTERVALS.some(
-        ({ interval }) => (intradaySQLBars.get(interval)?.length ?? 0) > 0,
-      );
-      if (!hasAnyIntraday) {
-        await Promise.all(
-          INTRADAY_INTERVALS.map(({ interval, maxDays }) =>
-            this.fetchAndCacheIntradayToSQL(symbol, interval, maxDays),
-          ),
-        );
-        intradaySQLBars = await this.getAllIntradayBarsFromSQL(symbol, startDate, endDate);
-      }
+      const { dailyBars, intradayBars: intradaySQLBars } = data;
 
-      // ── 3. Choose primary series: finest interval with enough bars ─────────
+      // ── Choose primary series: finest interval with enough bars ──────────────
       const best = INTRADAY_INTERVALS.find(
         ({ interval }) => (intradaySQLBars.get(interval)?.length ?? 0) >= 10,
       );
@@ -374,14 +453,10 @@ export class YFinanceService {
         ? (intradaySQLBars.get(best.interval) ?? [])
         : ohlcvToCandleBars(dailyBars);
 
-      console.log(
-        `[Backtest] ${symbol}: iterating over ${primaryInterval} bars (${primaryBars.length} bars)`,
-      );
-
       const startIdx = 10;
       if (primaryBars.length <= startIdx) continue;
 
-      // ── 4. Evaluate rule on each bar ───────────────────────────────────────
+      // ── Evaluate rule on each bar ─────────────────────────────────────────────
       for (let i = startIdx; i < primaryBars.length; i++) {
         const currentBar = primaryBars[i];
         const tick = {
@@ -395,17 +470,10 @@ export class YFinanceService {
           close: currentBar.close,
         };
 
-        let dataContext: DataContext;
-        if (primaryInterval === '1d') {
-          dataContext = buildBarContext(symbol, dailyBars, i, intradaySQLBars);
-        } else {
-          dataContext = buildIntradayBarContext(
-            symbol,
-            dailyBars,
-            intradaySQLBars,
-            currentBar.time,
-          );
-        }
+        const dataContext =
+          primaryInterval === '1d'
+            ? buildBarContext(symbol, dailyBars, i, intradaySQLBars)
+            : buildIntradayBarContext(symbol, dailyBars, intradaySQLBars, currentBar.time);
 
         const result = engine.evaluate(config, tick, dailyBars, dataContext);
 
@@ -466,23 +534,25 @@ export class YFinanceService {
 
     const minDate = new Date(Math.min(...bars.map((b) => b.time)) * 1000);
     const maxDate = new Date(Math.max(...bars.map((b) => b.time)) * 1000);
-    await prisma.$transaction([
-      prisma.stockPrice.deleteMany({
-        where: { symbol, interval, date: { gte: minDate, lte: maxDate } },
-      }),
-      prisma.stockPrice.createMany({
-        data: bars.map((bar) => ({
-          symbol,
-          date: new Date(bar.time * 1000),
-          interval,
-          open: bar.open,
-          high: bar.high,
-          low: bar.low,
-          close: bar.close,
-          volume: bar.volume,
-        })),
-      }),
-    ]);
+
+    // Two separate awaits instead of a single $transaction so SQLite releases
+    // the write lock between the delete and the insert (shorter lock windows,
+    // no timeout under sequential seeding).
+    await prisma.stockPrice.deleteMany({
+      where: { symbol, interval, date: { gte: minDate, lte: maxDate } },
+    });
+    await prisma.stockPrice.createMany({
+      data: bars.map((bar) => ({
+        symbol,
+        date: new Date(bar.time * 1000),
+        interval,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume,
+      })),
+    });
   }
 }
 
