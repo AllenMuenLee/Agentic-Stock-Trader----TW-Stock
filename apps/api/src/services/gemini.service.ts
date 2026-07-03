@@ -340,22 +340,35 @@ export class GeminiService {
     const method = stream ? 'streamGenerateContent' : 'generateContent';
     const url = `${this.baseUrl}/models/${this.model}:${method}${stream ? '?alt=sse&' : '?'}key=${this.apiKey}`;
 
+    // Google's Generative Language API intermittently returns a transient
+    // "500 INTERNAL" with no payload-related cause (confirmed by replaying the
+    // identical request and seeing it succeed) — retry a couple of times before
+    // surfacing it as a real failure.
+    const maxAttempts = 3;
     let response;
-    try {
-      response = await axios.post(
-        url,
-        {
-          contents: this.buildContents(messages),
-          generationConfig: { maxOutputTokens: 2048 },
-        },
-        {
-          headers: { 'Content-Type': 'application/json' },
-          responseType: stream ? 'stream' : 'json',
-          timeout: 60000,
-        },
-      );
-    } catch (err) {
-      throw new Error(`Gemini API request failed: ${await GeminiService.describeAxiosError(err)}`);
+    for (let attempt = 1; ; attempt++) {
+      try {
+        response = await axios.post(
+          url,
+          {
+            contents: this.buildContents(messages),
+            generationConfig: { maxOutputTokens: 2048 },
+          },
+          {
+            headers: { 'Content-Type': 'application/json' },
+            responseType: stream ? 'stream' : 'json',
+            timeout: 60000,
+          },
+        );
+        break;
+      } catch (err) {
+        const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+        const retryable = status !== undefined && status >= 500;
+        if (!retryable || attempt >= maxAttempts) {
+          throw new Error(`Gemini API request failed: ${await GeminiService.describeAxiosError(err)}`);
+        }
+        await new Promise((r) => setTimeout(r, attempt * 750));
+      }
     }
 
     if (stream) {
