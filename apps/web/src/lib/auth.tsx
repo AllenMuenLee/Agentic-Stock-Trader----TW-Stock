@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import { BASE as API_BASE } from '@/lib/api';
 
 interface User {
   id: string;
@@ -20,7 +21,6 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const PUBLIC_PATHS = ['/', '/login', '/register', '/docs'];
-const API_BASE = `${process.env.NEXT_PUBLIC_API_URL ?? ''}/api`;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);

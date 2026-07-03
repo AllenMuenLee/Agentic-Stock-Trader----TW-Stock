@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Send, Bot, User, Trash2, Plus, MessageSquare, ArrowLeft, Zap, Database, ChevronRight, Clock } from 'lucide-react';
 import Link from 'next/link';
-import { api } from '@/lib/api';
+import { api, BASE } from '@/lib/api';
 import MarkdownMessage from '@/components/chat/MarkdownMessage';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -280,7 +280,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
 
     try {
       const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
-      const res = await fetch(`/api/chat/${sessionId}`, {
+      const res = await fetch(`${BASE}/chat/${sessionId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
