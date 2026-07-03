@@ -20,6 +20,7 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const PUBLIC_PATHS = ['/', '/login', '/register', '/docs'];
+const API_BASE = `${process.env.NEXT_PUBLIC_API_URL ?? ''}/api`;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -48,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!PUBLIC_PATHS.includes(pathname)) router.push('/login');
       return;
     }
-    fetch('/api/auth/me', {
+    fetch(`${API_BASE}/auth/me`, {
       headers: { Authorization: `Bearer ${stored}` },
     })
       .then((r) => (r.ok ? r.json() : null))
@@ -69,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(async (username: string, password: string) => {
-    const res = await fetch('/api/auth/login', {
+    const res = await fetch(`${API_BASE}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
@@ -85,7 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [saveSession, router]);
 
   const register = useCallback(async (username: string, password: string) => {
-    const res = await fetch('/api/auth/register', {
+    const res = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),

@@ -20,7 +20,7 @@ export default function SignalToast() {
   const [toasts, setToasts] = useState<(SignalEvent & { id: string })[]>([]);
 
   useEffect(() => {
-    socket = io('http://localhost:3001', { transports: ['websocket'] });
+    socket = io(process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001', { transports: ['websocket'] });
 
     socket.on('signal', (event: SignalEvent) => {
       const id = `${event.ruleId}-${Date.now()}`;
