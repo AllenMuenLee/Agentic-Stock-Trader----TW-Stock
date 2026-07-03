@@ -18,7 +18,7 @@ export class RuleEngine {
     const conditions = config.conditions ?? [];
     if (conditions.length === 0) return { triggered: false };
 
-    const results = conditions.map((c) => this.evaluateCondition(c, tick, history));
+    const results = conditions.map((c: Condition) => this.evaluateCondition(c, tick, history));
     const triggered =
       config.logic === 'OR' ? results.some(Boolean) : results.every(Boolean);
 
@@ -136,7 +136,7 @@ export class RuleEngine {
   }
 
   private buildMessage(config: RuleConfig, tick: TickData): string {
-    const conditionDescriptions = (config.conditions ?? []).map((c) => {
+    const conditionDescriptions = (config.conditions ?? []).map((c: Condition) => {
       switch (c.type) {
         case 'PRICE_ABOVE_MA':
           return `Price above MA${c.params.period}`;
