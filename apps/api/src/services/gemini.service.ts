@@ -281,6 +281,32 @@ export class GeminiService {
     return (parts ?? []).map((p) => p.text ?? '').join('');
   }
 
+  /**
+   * Axios errors from streamed requests carry the response body as an unread
+   * stream, so `err.message`/`err.toString()` only ever say "Request failed
+   * with status code 500" — the actual reason from Google never surfaces.
+   * This reads that body so callers/logs get the real error text.
+   */
+  private static async describeAxiosError(err: unknown): Promise<string> {
+    if (!axios.isAxiosError(err)) return err instanceof Error ? err.message : String(err);
+
+    const status = err.response?.status;
+    const data = err.response?.data as NodeJS.ReadableStream | unknown;
+
+    if (data && typeof (data as NodeJS.ReadableStream).on === 'function') {
+      const body: string = await new Promise((resolve) => {
+        let raw = '';
+        const s = data as NodeJS.ReadableStream;
+        s.on('data', (c: Buffer) => { raw += c.toString(); });
+        s.on('end', () => resolve(raw));
+        s.on('error', () => resolve(raw));
+      });
+      return `HTTP ${status}: ${body.slice(0, 500)}`;
+    }
+
+    return `HTTP ${status}: ${JSON.stringify(data).slice(0, 500)}`;
+  }
+
   async chat(
     messages: ChatMessage[],
     onChunk?: (chunk: string) => void,
@@ -301,18 +327,23 @@ export class GeminiService {
     const method = stream ? 'streamGenerateContent' : 'generateContent';
     const url = `${this.baseUrl}/models/${this.model}:${method}${stream ? '?alt=sse&' : '?'}key=${this.apiKey}`;
 
-    const response = await axios.post(
-      url,
-      {
-        contents: this.buildContents(messages),
-        generationConfig: { maxOutputTokens: 2048 },
-      },
-      {
-        headers: { 'Content-Type': 'application/json' },
-        responseType: stream ? 'stream' : 'json',
-        timeout: 60000,
-      },
-    );
+    let response;
+    try {
+      response = await axios.post(
+        url,
+        {
+          contents: this.buildContents(messages),
+          generationConfig: { maxOutputTokens: 2048 },
+        },
+        {
+          headers: { 'Content-Type': 'application/json' },
+          responseType: stream ? 'stream' : 'json',
+          timeout: 60000,
+        },
+      );
+    } catch (err) {
+      throw new Error(`Gemini API request failed: ${await GeminiService.describeAxiosError(err)}`);
+    }
 
     if (stream) {
       return this.handleStream(response.data, onChunk!);
