@@ -78,6 +78,8 @@ router.post('/:sessionId', async (req: Request, res: Response, next: NextFunctio
   const { sessionId } = req.params;
   const { message } = req.body as { message: string };
 
+  console.log(`[Chat] Received message for session: ${sessionId}`);
+
   if (!message?.trim()) {
     res.status(400).json({ error: 'Message is required' });
     return;
