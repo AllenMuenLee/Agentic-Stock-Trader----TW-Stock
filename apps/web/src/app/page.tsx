@@ -67,7 +67,7 @@ export default function HomePage() {
           </div>
 
           <h1 className="text-5xl sm:text-6xl font-bold text-slate-100 mb-6 leading-tight tracking-tight">
-            智股通
+            AI股探
             <span className="block text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400 mt-1">
               讓 AI 替您看盤
             </span>
@@ -101,7 +101,7 @@ export default function HomePage() {
       {/* Features */}
       <section className="max-w-5xl mx-auto px-6 py-20 w-full">
         <div className="text-center mb-14">
-          <h2 className="text-3xl font-bold text-slate-100 mb-3">為什麼選擇智股通？</h2>
+          <h2 className="text-3xl font-bold text-slate-100 mb-3">為什麼選擇AI股探？</h2>
           <p className="text-slate-400">強大的功能，簡單的操作，讓股票監控更聰明</p>
         </div>
 

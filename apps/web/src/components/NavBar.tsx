@@ -20,7 +20,7 @@ export default function NavBar() {
       <div className="max-w-7xl mx-auto px-4 flex items-center h-14 gap-2">
         <Link href="/" className="flex items-center gap-2 mr-6">
           <TrendingUp className="w-5 h-5 text-sky-400" />
-          <span className="font-bold text-slate-100 text-sm">智股通</span>
+          <span className="font-bold text-slate-100 text-sm">AI股探</span>
         </Link>
 
         {user && links.map(({ href, label, icon: Icon }) => (

@@ -218,7 +218,7 @@ export default function DocsPage() {
           <div className="inline-flex items-center gap-2 text-xs text-sky-400 bg-sky-900/20 border border-sky-700/30 rounded-full px-3 py-1 mb-4">
             <Code2 className="w-3.5 h-3.5" /> API 文件
           </div>
-          <h1 className="text-3xl font-bold text-slate-100">智股通 API 文件</h1>
+          <h1 className="text-3xl font-bold text-slate-100">AI股探 API 文件</h1>
           <p className="text-slate-400 mt-2">完整的 REST 與 WebSocket API 參考文件，讓你在外部應用中整合即時股票訊號。</p>
         </div>
 
@@ -231,7 +231,7 @@ export default function DocsPage() {
         {/* ── Overview ── */}
         <SectionHeading id="overview"><BookOpen className="w-5 h-5 text-sky-400" /> 概覽</SectionHeading>
         <div className="prose-custom space-y-4 text-slate-400 text-sm leading-relaxed">
-          <p>智股通 API 提供兩種接入方式：</p>
+          <p>AI股探 API 提供兩種接入方式：</p>
           <div className="grid sm:grid-cols-2 gap-4">
             {[
               { icon: <Lock className="w-5 h-5 text-sky-400" />, title: 'REST API', desc: '標準 HTTP 請求，用於帳號管理、規則設定、設定查詢等操作。所有受保護的端點需在 Header 帶入 JWT Token。' },
@@ -676,7 +676,7 @@ socket.emit('unsubscribe', ['2317']);`} />
         </div>
 
         {/* Footer note */}
-        <p className="text-center text-xs text-slate-600 mt-16">智股通 API · Base URL: <code className="text-slate-500">http://localhost:3001</code></p>
+        <p className="text-center text-xs text-slate-600 mt-16">AI股探 API · Base URL: <code className="text-slate-500">http://localhost:3001</code></p>
       </div>
     </div>
   );

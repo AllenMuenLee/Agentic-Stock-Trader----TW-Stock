@@ -32,7 +32,7 @@ export default function LoginPage() {
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 mb-4">
             <TrendingUp className="w-8 h-8 text-sky-400" />
-            <span className="text-2xl font-bold text-slate-100">智股通</span>
+            <span className="text-2xl font-bold text-slate-100">AI股探</span>
           </div>
           <h1 className="text-xl font-semibold text-slate-200">登入帳號</h1>
           <p className="text-sm text-slate-500 mt-1">歡迎回來，請輸入您的帳號資訊</p>

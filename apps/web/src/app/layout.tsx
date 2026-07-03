@@ -5,7 +5,7 @@ import SignalToast from '@/components/SignalToast';
 import { AuthProvider } from '@/lib/auth';
 
 export const metadata: Metadata = {
-  title: '智股通 — AI 股票監控系統',
+  title: 'AI股探 — AI 股票監控系統',
   description: 'AI 驅動的股票信號監控系統',
 };
 

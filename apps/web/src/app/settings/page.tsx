@@ -477,7 +477,7 @@ export default function SettingsPage() {
           /* Unbound state */
           <div>
             <p className="text-sm text-slate-400 mb-4">
-              透過 Discord OAuth2 授權，讓智股通 Bot 傳送私訊通知給您。
+              透過 Discord OAuth2 授權，讓AI股探 Bot 傳送私訊通知給您。
             </p>
             <button
               onClick={authorizeDiscord}

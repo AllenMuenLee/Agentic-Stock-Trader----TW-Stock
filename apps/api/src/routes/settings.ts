@@ -51,7 +51,7 @@ router.post('/test-notification', async (req: Request, res: Response, next: Next
 
     const payload = {
       title: 'Test Notification',
-      message: 'This is a test notification from 智股通!',
+      message: 'This is a test notification from AI股探!',
       symbol: '2330',
       signal: 'BUY',
       price: 900,

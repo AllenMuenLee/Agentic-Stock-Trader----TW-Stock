@@ -131,7 +131,7 @@ export class NotificationService {
           ${payload.price ? `<p><strong>Price:</strong> ${payload.price}</p>` : ''}
           <p style="color: #64748b;">${payload.message}</p>
           <hr style="border-color: #e2e8f0;">
-          <p style="font-size: 12px; color: #94a3b8;">Sent by 智股通</p>
+          <p style="font-size: 12px; color: #94a3b8;">Sent by AI股探</p>
         </div>
       </div>
     `;
