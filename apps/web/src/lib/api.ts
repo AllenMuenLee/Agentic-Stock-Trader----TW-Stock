@@ -76,6 +76,8 @@ export const api = {
     fetchJson<{ url: string; discordUserId: string | null }>('/bind/discord/url'),
   unbindDiscord: () =>
     fetchJson('/bind/discord/unbind', { method: 'POST' }),
+  getDiscordGuildStatus: () =>
+    fetchJson<{ joined: boolean; inviteUrl: string | null }>('/bind/discord/guild-status'),
 
   // Stocks
   getQuote: (symbol: string) => fetchJson(`/stocks/quote/${symbol}`),

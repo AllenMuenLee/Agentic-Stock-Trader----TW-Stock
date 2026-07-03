@@ -73,7 +73,11 @@ export default function SettingsPage() {
   const [discordLoading, setDiscordLoading] = useState(false);
   const [discordTesting, setDiscordTesting] = useState(false);
   const [discordTestResult, setDiscordTestResult] = useState<'ok' | 'error' | null>(null);
+  const [discordTestError, setDiscordTestError] = useState<string | null>(null);
   const [discordUnbinding, setDiscordUnbinding] = useState(false);
+  const [discordGuildJoined, setDiscordGuildJoined] = useState<boolean | null>(null);
+  const [discordInviteUrl, setDiscordInviteUrl] = useState<string | null>(null);
+  const [discordGuildChecking, setDiscordGuildChecking] = useState(false);
 
   // Password change state
   const [currentPwd, setCurrentPwd] = useState('');
@@ -94,6 +98,23 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => { loadSettings(); }, [loadSettings]);
+
+  const checkDiscordGuild = useCallback(async () => {
+    setDiscordGuildChecking(true);
+    try {
+      const { joined, inviteUrl } = await api.getDiscordGuildStatus();
+      setDiscordGuildJoined(joined);
+      setDiscordInviteUrl(inviteUrl);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setDiscordGuildChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (settings.discordUserId) checkDiscordGuild();
+  }, [settings.discordUserId, checkDiscordGuild]);
 
   // Countdown timer for LINE binding code
   useEffect(() => {
@@ -195,11 +216,16 @@ export default function SettingsPage() {
 
   const testDiscord = async () => {
     setDiscordTesting(true);
+    setDiscordTestError(null);
     try {
       await api.testNotification('discord');
       setDiscordTestResult('ok');
-    } catch {
+    } catch (err) {
       setDiscordTestResult('error');
+      if (err instanceof Error && err.message.includes('discord_not_in_guild')) {
+        setDiscordTestError('尚未加入 Discord 伺服器');
+        setDiscordGuildJoined(false);
+      }
     } finally {
       setDiscordTesting(false);
       setTimeout(() => setDiscordTestResult(null), 5000);
@@ -395,6 +421,34 @@ export default function SettingsPage() {
               <span className="text-sm text-emerald-400 font-medium">已綁定</span>
               <span className="text-xs text-slate-500 font-mono ml-1">{settings.discordUserId}</span>
             </div>
+
+            {discordGuildJoined === false && (
+              <div className="mb-3 flex flex-col gap-2 text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3">
+                <span>Discord 政策要求 Bot 與使用者需有共同伺服器才能私訊。請先加入指定伺服器以接收通知。</span>
+                <div className="flex gap-2">
+                  {discordInviteUrl && (
+                    <a
+                      href={discordInviteUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-primary text-xs flex items-center gap-1.5 w-fit"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      加入 Discord 伺服器
+                    </a>
+                  )}
+                  <button
+                    onClick={checkDiscordGuild}
+                    disabled={discordGuildChecking}
+                    className="btn-ghost text-xs flex items-center gap-1.5 w-fit"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${discordGuildChecking ? 'animate-spin' : ''}`} />
+                    已加入，重新檢查
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-2">
               <button
                 onClick={testDiscord}
@@ -415,7 +469,7 @@ export default function SettingsPage() {
             </div>
             {discordTestResult && (
               <p className={`text-xs mt-2 flex items-center gap-1 ${discordTestResult === 'ok' ? 'text-emerald-400' : 'text-red-400'}`}>
-                {discordTestResult === 'ok' ? <><CheckCircle className="w-3.5 h-3.5" /> 測試訊息已發送！</> : <><XCircle className="w-3.5 h-3.5" /> 發送失敗。</>}
+                {discordTestResult === 'ok' ? <><CheckCircle className="w-3.5 h-3.5" /> 測試訊息已發送！</> : <><XCircle className="w-3.5 h-3.5" /> {discordTestError || '發送失敗。'}</>}
               </p>
             )}
           </div>

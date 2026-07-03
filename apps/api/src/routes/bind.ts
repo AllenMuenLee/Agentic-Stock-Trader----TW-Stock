@@ -5,9 +5,11 @@ import jwt from 'jsonwebtoken';
 import axios from 'axios';
 import QRCode from 'qrcode';
 import { requireAuth } from '../middleware/auth';
+import { NotificationService } from '../services/notification.service';
 
 const router = Router();
 const prisma = new PrismaClient();
+const notifier = new NotificationService();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'stock-notifier-secret-key';
 
@@ -145,6 +147,24 @@ router.get('/discord/callback', async (req: Request, res: Response, next: NextFu
     });
 
     return res.redirect(`${frontendUrl}/settings?discord=bound`);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/bind/discord/guild-status — has the bound user joined the required server?
+router.get('/discord/guild-status', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
+    const inviteUrl = process.env.DISCORD_INVITE_URL || null;
+
+    if (!user?.discordUserId) {
+      res.json({ joined: false, inviteUrl });
+      return;
+    }
+
+    const joined = await notifier.isDiscordGuildMember(user.discordUserId);
+    res.json({ joined, inviteUrl });
   } catch (err) {
     next(err);
   }

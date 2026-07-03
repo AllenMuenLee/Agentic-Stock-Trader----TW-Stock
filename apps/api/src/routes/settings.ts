@@ -62,6 +62,11 @@ router.post('/test-notification', async (req: Request, res: Response, next: Next
     } else if (channel === 'line' && user?.lineUserId) {
       await notifier.sendLine(user.lineUserId, payload);
     } else if (channel === 'discord' && user?.discordUserId) {
+      const joined = await notifier.isDiscordGuildMember(user.discordUserId);
+      if (!joined) {
+        res.status(400).json({ error: 'discord_not_in_guild', message: '請先加入指定的 Discord 伺服器，才能接收私訊通知' });
+        return;
+      }
       await notifier.sendDiscordDM(user.discordUserId, payload);
     } else {
       res.status(400).json({ error: `No ${channel} binding configured` });

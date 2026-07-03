@@ -55,6 +55,24 @@ export class NotificationService {
     console.log(`[Notification] LINE message sent to ${lineUserId}`);
   }
 
+  // Discord only allows a bot to DM a user if they share a guild. We require
+  // users to join a designated server (DISCORD_GUILD_ID) as a workaround.
+  async isDiscordGuildMember(discordUserId: string): Promise<boolean> {
+    const { DISCORD_BOT_TOKEN, DISCORD_GUILD_ID } = process.env;
+    if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID) return false;
+
+    try {
+      await axios.get(
+        `https://discord.com/api/v10/guilds/${DISCORD_GUILD_ID}/members/${discordUserId}`,
+        { headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}` } },
+      );
+      return true;
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 404) return false;
+      throw err;
+    }
+  }
+
   async sendDiscordDM(discordUserId: string, payload: NotificationPayload): Promise<void> {
     const { DISCORD_BOT_TOKEN } = process.env;
 
