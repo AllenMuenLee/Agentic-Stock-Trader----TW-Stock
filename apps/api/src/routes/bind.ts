@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import axios from 'axios';
+import QRCode from 'qrcode';
 import { requireAuth } from '../middleware/auth';
 
 const router = Router();
@@ -26,13 +27,20 @@ router.get('/line/code', requireAuth, async (req: Request, res: Response, next: 
     const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
     const botBasicId = process.env.LINE_BOT_BASIC_ID || '';
 
+    // LINE doesn't expose a static QR image URL for an Official Account, so we
+    // render one ourselves from the official add-friend link (line.me/R/ti/p/@<id>).
+    const qrCodeUrl = botBasicId
+      ? await QRCode.toDataURL(`https://line.me/R/ti/p/%40${botBasicId.replace(/^@/, '')}`, {
+          width: 320,
+          margin: 1,
+        })
+      : null;
+
     res.json({
       code,
       expiry: expiry.toISOString(),
       lineUserId: user?.lineUserId ?? null,
-      qrCodeUrl: botBasicId
-        ? `https://qr-official.line.me/gs/M_${botBasicId}.png`
-        : null,
+      qrCodeUrl,
       botBasicId,
     });
   } catch (err) {

@@ -460,12 +460,12 @@ export default function DocsPage() {
           method="GET"
           path="/api/bind/line/code"
           title="LINE 取得綁定碼"
-          description="產生一組 6 位數英數字綁定碼，有效期 15 分鐘。同時回傳 LINE Bot 的 QR Code 網址。"
+          description="產生一組 6 位數英數字綁定碼，有效期 15 分鐘。同時回傳 LINE Bot 的 QR Code（base64 data URI）。"
           response={`{
   "code": "A3F9B2",
   "expiry": "2026-07-01T11:00:00Z",
   "lineUserId": null,
-  "qrCodeUrl": "https://qr-official.line.me/gs/M_xxxxx.png",
+  "qrCodeUrl": "data:image/png;base64,iVBORw0KGgo...",
   "botBasicId": "xxxxx"
 }`}
         />
