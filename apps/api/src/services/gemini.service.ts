@@ -261,12 +261,25 @@ export class GeminiService {
    * Converts our chat history to Google's `contents` format. Gemma models on the
    * Generative Language API do not support a separate systemInstruction, so the
    * system prompt is folded into the first user turn (keeps user/model alternation).
+   *
+   * Google's API requires strict user/model alternation and returns a hard-to-diagnose
+   * "500 INTERNAL" if two turns of the same role appear back to back. This happens in
+   * practice whenever a prior `chat()` call throws after the user message was already
+   * persisted (e.g. a transient upstream error) — the next call then has two consecutive
+   * 'user' turns. Consecutive same-role turns are merged here so a single bad turn can't
+   * permanently wedge the session into repeated 500s.
    */
   private buildContents(messages: ChatMessage[]): GeminiContent[] {
-    const contents: GeminiContent[] = messages.map((m) => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    }));
+    const contents: GeminiContent[] = [];
+    for (const m of messages) {
+      const role = m.role === 'assistant' ? 'model' : 'user';
+      const last = contents[contents.length - 1];
+      if (last && last.role === role) {
+        last.parts[0].text += `\n\n${m.content}`;
+      } else {
+        contents.push({ role, parts: [{ text: m.content }] });
+      }
+    }
 
     const firstUser = contents.find((c) => c.role === 'user');
     if (firstUser) {
