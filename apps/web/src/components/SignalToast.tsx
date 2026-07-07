@@ -10,6 +10,7 @@ interface SignalEvent {
   symbol: string;
   signal: 'BUY' | 'SELL';
   price: number;
+  quantity: number | null;
   message: string;
   triggeredAt: string;
 }
@@ -20,7 +21,13 @@ export default function SignalToast() {
   const [toasts, setToasts] = useState<(SignalEvent & { id: string })[]>([]);
 
   useEffect(() => {
-    socket = io(process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001', { transports: ['websocket'] });
+    const token = localStorage.getItem('auth_token');
+    if (!token) return;
+
+    socket = io(process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001', {
+      auth: { token: `Bearer ${token}` },
+      transports: ['websocket'],
+    });
 
     socket.on('signal', (event: SignalEvent) => {
       const id = `${event.ruleId}-${Date.now()}`;
@@ -63,6 +70,9 @@ export default function SignalToast() {
                 </span>
                 <span className="text-slate-400 text-xs">·</span>
                 <span className="text-slate-300 text-xs font-medium">{toast.symbol}</span>
+                {toast.quantity !== null && (
+                  <span className="text-slate-500 text-xs">x{toast.quantity}</span>
+                )}
                 <span className="text-slate-400 text-xs ml-auto">${toast.price}</span>
               </div>
               <p className="text-xs text-slate-500 truncate">{toast.ruleName}</p>

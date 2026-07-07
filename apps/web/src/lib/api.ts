@@ -1,3 +1,5 @@
+import type { PlanStatus, TradeActivityDto } from '@stock-notifier/shared';
+
 export const BASE = `${process.env.NEXT_PUBLIC_API_URL ?? ''}/api`;
 
 function getToken(): string | null {
@@ -83,4 +85,35 @@ export const api = {
   getQuote: (symbol: string) => fetchJson(`/stocks/quote/${symbol}`),
   getHistory: (symbol: string, days = 30) =>
     fetchJson(`/stocks/history/${symbol}?days=${days}`),
+
+  // Plans
+  getPlanStatus: () => fetchJson<PlanStatus>('/plans/me'),
+  switchPlan: (planId: string) =>
+    fetchJson<PlanStatus>('/plans/switch', { method: 'POST', body: JSON.stringify({ planId }) }),
+
+  // Trading app activity — trades executed locally by the trading-app CLI
+  getTradingActivity: () => fetchJson<TradeActivityDto[]>('/trading-app/activity'),
+
+  // Trading app download — needs the Authorization header, so a plain <a href>
+  // won't work; fetch as a blob and trigger a synthetic download instead.
+  downloadTradingApp: async (): Promise<void> => {
+    const token = getToken();
+    const res = await fetch(`${BASE}/trading-app/download`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      let msg = '下載失敗，請稍後再試';
+      try { msg = (await res.json()).error || msg; } catch { /* non-JSON error */ }
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'stock-notifier-trading-app.zip';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 };

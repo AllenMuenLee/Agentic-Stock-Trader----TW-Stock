@@ -13,6 +13,9 @@ import stocksRouter from './routes/stocks';
 import authRouter from './routes/auth';
 import bindRouter from './routes/bind';
 import webhooksRouter from './routes/webhooks';
+import plansRouter from './routes/plans';
+import tradingAppRouter from './routes/trading-app';
+import { originGuard } from './middleware/originGuard';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'stock-notifier-secret-key';
 
@@ -20,10 +23,17 @@ import { FugleService } from './services/fugle.service';
 import { NotificationService } from './services/notification.service';
 import { RuleEngine } from './engine/rule-engine';
 import { loadDataContext } from './engine/data-context';
+import { confirmThirtyMinuteSameColorTrade } from './engine/trade-filters';
 import { runPoolFilter } from './engine/sandbox';
 import { initSubscriptionManager, refreshSubscriptions, getTrackedSubscriptions } from './subscription-manager';
 import { redis, yfinance } from './singletons';
 import type { RuleConfig, TickData } from './types/rule';
+import type { SignalPayloadDto } from '@stock-notifier/shared';
+
+// Fallback order size (shares) for BUY/SELL signals whose rule code doesn't
+// specify a quantity (legacy declarative rules, or code written before this
+// field existed). AI-generated trade rules are instructed to always return one.
+const DEFAULT_TRADE_QUANTITY = 1000; // 1 張
 
 const app = express();
 const httpServer = createServer(app);
@@ -40,6 +50,22 @@ const ruleEngine = new RuleEngine();
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }));
 app.use(express.json());
 
+// Only login, the LINE webhook, the Discord OAuth callback, the health check, and the
+// trading-app's activity report may be called directly (script/curl/third-party).
+// Everything else must come from the official web dashboard, enforced by requiring a
+// matching Origin/Referer header.
+const ORIGIN_GUARD_EXEMPT = new Set([
+  'POST /api/auth/login',
+  'POST /api/webhooks/line',
+  'GET /api/bind/discord/callback',
+  'GET /api/health',
+  'POST /api/trading-app/activity',
+]);
+app.use((req, res, next) => {
+  if (ORIGIN_GUARD_EXEMPT.has(`${req.method} ${req.path}`)) return next();
+  originGuard(req, res, next);
+});
+
 // ─── Routes ──────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRouter);
 app.use('/api/chat', chatRouter);
@@ -48,6 +74,8 @@ app.use('/api/settings', settingsRouter);
 app.use('/api/stocks', stocksRouter);
 app.use('/api/bind', bindRouter);
 app.use('/api/webhooks', webhooksRouter);
+app.use('/api/plans', plansRouter);
+app.use('/api/trading-app', tradingAppRouter);
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
@@ -61,17 +89,21 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   }
 });
 
-// ─── Socket.IO auth middleware (optional — unauthenticated sockets still receive tick data)
+// ─── Socket.IO auth middleware (required — the socket is a logged-in-user-only surface)
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token as string | undefined;
-  if (token) {
-    try {
-      const raw = token.startsWith('Bearer ') ? token.slice(7) : token;
-      const payload = jwt.verify(raw, JWT_SECRET) as { id: string; username: string };
-      socket.data.userId = payload.id;
-    } catch { /* unauthenticated — tick feed still works */ }
+  if (!token) {
+    next(new Error('unauthorized'));
+    return;
   }
-  next();
+  try {
+    const raw = token.startsWith('Bearer ') ? token.slice(7) : token;
+    const payload = jwt.verify(raw, JWT_SECRET) as { id: string; username: string };
+    socket.data.userId = payload.id;
+    next();
+  } catch {
+    next(new Error('unauthorized'));
+  }
 });
 
 // ─── Socket.IO real-time feed ─────────────────────────────────────────────────
@@ -165,6 +197,31 @@ fugle.onTick(async (tick: TickData) => {
       }
 
       if (!result.triggered) continue;
+      if (
+        config.actionType === 'trade' &&
+        (result.signal === 'BUY' || result.signal === 'SELL')
+      ) {
+        const confirmation = confirmThirtyMinuteSameColorTrade(
+          dataContext,
+          tick.symbol,
+          currTimeSec,
+          tick.price,
+        );
+        if (!confirmation.allowed) {
+          console.log(
+            `[Engine] Rule "${rule.name}" trade signal skipped for ${tick.symbol}: ` +
+              confirmation.reason,
+          );
+          continue;
+        }
+      }
+
+      // Suggested order size for BUY/SELL — the AI-generated rule code decides this;
+      // DEFAULT_TRADE_QUANTITY only covers legacy/declarative rules or code that omits it.
+      const quantity =
+        result.signal === 'BUY' || result.signal === 'SELL'
+          ? result.quantity ?? DEFAULT_TRADE_QUANTITY
+          : null;
 
       // Save trigger
       const trigger = await prisma.trigger.create({
@@ -173,18 +230,20 @@ fugle.onTick(async (tick: TickData) => {
           symbol: tick.symbol,
           signal: result.signal!,
           price: tick.price,
+          quantity,
           message: result.message!,
         },
       });
 
-      const signalPayload = {
+      const signalPayload: SignalPayloadDto = {
         ruleId: rule.id,
         ruleName: rule.name,
         triggerId: trigger.id,
         symbol: tick.symbol,
-        signal: result.signal,
+        signal: result.signal!,
         price: tick.price,
-        message: result.message,
+        quantity,
+        message: result.message!,
         triggeredAt: trigger.triggeredAt.toISOString(),
       };
 

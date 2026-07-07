@@ -6,6 +6,8 @@ import type { DataContext } from './data-context';
 export interface RuleCodeResult {
   signal: Signal;
   message: string;
+  /** Suggested order size in shares for BUY/SELL signals. Undefined when the code didn't specify one. */
+  quantity?: number;
 }
 
 export interface SandboxOutcome {
@@ -55,6 +57,13 @@ function validateResult(value: unknown): SandboxOutcome {
     typeof obj.message === 'string' && obj.message.trim().length > 0
       ? obj.message
       : `${signal} signal triggered`;
+
+  if (obj.quantity !== undefined) {
+    if (typeof obj.quantity !== 'number' || !Number.isFinite(obj.quantity) || obj.quantity <= 0) {
+      return { result: null, error: `Rule returned invalid quantity "${String(obj.quantity)}" (expected a positive number)` };
+    }
+    return { result: { signal: signal as Signal, message, quantity: obj.quantity } };
+  }
 
   return { result: { signal: signal as Signal, message } };
 }

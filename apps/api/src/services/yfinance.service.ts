@@ -2,6 +2,7 @@ import axios from 'axios';
 import { PrismaClient } from '@prisma/client';
 import type { OHLCVBar } from '../types/rule.js';
 import type { CandleBar, DataContext } from '../engine/data-context.js';
+import { confirmThirtyMinuteSameColorTrade } from '../engine/trade-filters.js';
 
 const prisma = new PrismaClient();
 
@@ -489,6 +490,16 @@ export class YFinanceService {
         if (!result.triggered) continue;
 
         const signal = result.signal ?? config.signal;
+        if (config.actionType === 'trade' && (signal === 'BUY' || signal === 'SELL')) {
+          const confirmation = confirmThirtyMinuteSameColorTrade(
+            dataContext,
+            symbol,
+            currentBar.time,
+            currentBar.close,
+          );
+          if (!confirmation.allowed) continue;
+        }
+
         totalSignals++;
 
         let profitPercent: number | undefined;

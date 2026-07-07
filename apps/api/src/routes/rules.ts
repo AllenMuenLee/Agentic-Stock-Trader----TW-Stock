@@ -5,9 +5,11 @@ import { runPoolFilter } from '../engine/sandbox';
 import { refreshSubscriptions } from '../subscription-manager';
 import { yfinance } from '../singletons';
 import { requireAuth } from '../middleware/auth';
+import { UsageService } from '../services/usage.service';
 
 const router = Router();
 const prisma = new PrismaClient();
+const usage = new UsageService(prisma);
 
 router.use(requireAuth);
 
@@ -79,6 +81,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
           symbol: t.symbol,
           signal: t.signal,
           price: t.price,
+          quantity: t.quantity,
           message: t.message,
           triggeredAt: t.triggeredAt.toISOString(),
         })),
@@ -101,6 +104,17 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     }
     if (poolType === 'FIXED' && !dto.symbols?.length) {
       res.status(400).json({ error: 'symbols required for FIXED pool type' });
+      return;
+    }
+
+    const quota = await usage.consumeQuota(req.user!.id, 'rule');
+    if (!quota.ok) {
+      res.status(403).json({
+        error: `已達 ${quota.planName} 每日規則建立上限（${quota.limit} 個），請升級方案或明天再試`,
+        code: 'LIMIT_EXCEEDED',
+        limit: quota.limit,
+        planId: quota.planId,
+      });
       return;
     }
 
@@ -307,6 +321,7 @@ router.get('/:id/triggers', async (req: Request, res: Response, next: NextFuncti
         symbol: t.symbol,
         signal: t.signal,
         price: t.price,
+        quantity: t.quantity,
         message: t.message,
         triggeredAt: t.triggeredAt.toISOString(),
       })),

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI股探 交易應用程式</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>AI股探 獨立交易應用程式</h1>
+    <p class="hint">富邦登入資訊與憑證只會保留在本機記憶體中，絕不會上傳至伺服器。</p>
+
+    <div class="card">
+      <div class="field">
+        <label>伺服器網址（由環境變數 SERVER_URL 設定）</label>
+        <input id="serverUrl" disabled />
+      </div>
+    </div>
+
+    <form id="loginForm" class="card">
+      <div class="field">
+        <label for="aiUsername">AI股探 帳號</label>
+        <input id="aiUsername" required autocomplete="username" />
+      </div>
+      <div class="field">
+        <label for="aiPassword">AI股探 密碼</label>
+        <input id="aiPassword" type="password" required autocomplete="current-password" />
+      </div>
+      <div class="field checkbox-field">
+        <label>
+          <input type="checkbox" id="simulate" />
+          使用富邦模擬交易環境（自動使用內建測試帳號與憑證，交易紀錄會標記為「模擬」）
+        </label>
+      </div>
+      <div id="fubonFields" class="fubon-fields">
+        <div class="field">
+          <label for="fubonId">富邦帳號（身分證字號 / 統編）</label>
+          <input id="fubonId" required />
+        </div>
+        <div class="field">
+          <label for="fubonPassword">富邦密碼</label>
+          <input id="fubonPassword" type="password" required />
+        </div>
+        <div class="field">
+          <label for="fubonCertPath">富邦憑證檔案路徑 (.pfx)</label>
+          <input id="fubonCertPath" placeholder="C:\path\to\cert.pfx" required />
+        </div>
+        <div class="field">
+          <label for="fubonCertPassword">富邦憑證密碼</label>
+          <input id="fubonCertPassword" type="password" required />
+        </div>
+      </div>
+      <button type="submit" id="connectBtn">連線並開始監聽訊號</button>
+      <p id="loginError" class="error hidden"></p>
+    </form>
+
+    <div id="connectedPanel" class="card hidden">
+      <p class="connected-line">
+        <span class="dot"></span>
+        已連線 — <span id="modeLabel"></span>（<span id="usernameLabel"></span>）
+      </p>
+      <button id="disconnectBtn" class="secondary">中斷連線</button>
+    </div>
+
+    <div id="pendingSection" class="hidden">
+      <h2>待確認交易</h2>
+      <p class="hint">規則觸發了以下交易訊號，尚未送出委託 — 請確認或拒絕每一筆。</p>
+      <div id="pendingList"></div>
+    </div>
+
+    <h2>交易活動</h2>
+    <table id="activityTable">
+      <thead>
+        <tr><th>時間</th><th>方向</th><th>股票</th><th>數量</th><th>狀態</th><th>來源</th><th>規則</th></tr>
+      </thead>
+      <tbody id="activityBody"></tbody>
+    </table>
+    <p id="activityEmpty" class="hint">尚無交易活動。</p>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

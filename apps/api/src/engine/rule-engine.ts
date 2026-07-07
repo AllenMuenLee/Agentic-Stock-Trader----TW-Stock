@@ -48,6 +48,7 @@ export class RuleEngine {
       triggered: true,
       signal: result.signal,
       message: result.message,
+      quantity: result.quantity,
     };
   }
 

@@ -289,6 +289,20 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         body: JSON.stringify({ message: userMsg }),
       });
 
+      if (!res.ok) {
+        let msg = '抱歉，發生錯誤，請稍後再試。';
+        try {
+          const body = await res.json();
+          if (body?.error) msg = body.error;
+        } catch { /* non-JSON error body */ }
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (!last?.streaming) return prev;
+          return [...prev.slice(0, -1), { ...last, content: msg, streaming: false }];
+        });
+        return;
+      }
+
       if (!res.body) throw new Error('No response stream');
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -344,8 +358,16 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         ...prev,
         { role: 'assistant', content: `✅ 規則「${name}」已成功儲存！您可以在 Dashboard 頁面查看和管理它。` },
       ]);
-    } catch {
-      alert('儲存規則失敗，請稍後再試');
+    } catch (err) {
+      let msg = '儲存規則失敗，請稍後再試';
+      if (err instanceof Error) {
+        try {
+          const jsonPart = err.message.slice(err.message.indexOf('{'));
+          const body = JSON.parse(jsonPart);
+          if (body?.error) msg = body.error;
+        } catch { /* non-JSON error body — keep default message */ }
+      }
+      alert(msg);
     }
   };
 

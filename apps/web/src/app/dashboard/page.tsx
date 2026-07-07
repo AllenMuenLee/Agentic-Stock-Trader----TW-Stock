@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import type { RuleDto, TriggerDto, BacktestResult, PoolType } from '@stock-notifier/shared';
 import { JsCode } from '@/components/CodeView';
+import TradingActivityPanel from '@/components/TradingActivityPanel';
 
 interface RuleWithExtra extends RuleDto {
   recentTriggers?: TriggerDto[];
@@ -217,6 +218,8 @@ export default function DashboardPage() {
           重新整理
         </button>
       </div>
+
+      <TradingActivityPanel />
 
       {rules.map((rule) => {
         const isExpanded = expandedId === rule.id;
@@ -622,6 +625,7 @@ export default function DashboardPage() {
                             <span className={t.signal === 'BUY' ? 'badge-buy' : t.signal === 'SELL' ? 'badge-sell' : 'text-xs bg-sky-500/20 text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded-full font-semibold'}>{t.signal}</span>
                             <span className="font-medium text-slate-300">{t.symbol}</span>
                             <span>${t.price}</span>
+                            {t.quantity !== null && <span className="text-slate-600">x{t.quantity}</span>}
                             <span className="ml-auto text-slate-600 tabular-nums">
                               {new Date(t.triggeredAt).toLocaleString()}
                             </span>

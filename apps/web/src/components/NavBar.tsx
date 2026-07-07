@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { MessageSquare, LayoutDashboard, Settings, TrendingUp, LogOut, User, BookOpen } from 'lucide-react';
+import { MessageSquare, LayoutDashboard, Settings, TrendingUp, LogOut, User, BookOpen, CreditCard } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 
 const links = [
   { href: '/chat', label: 'AI 助手', icon: MessageSquare },
   { href: '/dashboard', label: '監控儀表板', icon: LayoutDashboard },
+  { href: '/plans', label: '訂閱方案', icon: CreditCard },
   { href: '/settings', label: '帳號設定', icon: Settings },
 ];
 

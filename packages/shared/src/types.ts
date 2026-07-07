@@ -83,6 +83,8 @@ export interface RuleResult {
   triggered: boolean;
   signal?: Signal;
   message?: string;
+  /** Suggested order size in shares, for BUY/SELL signals from `actionType: "trade"` rules. AI-generated code sets this explicitly; falls back to a default when absent. */
+  quantity?: number;
   data?: Record<string, unknown>;
   /** Populated when code-rule execution failed (syntax/runtime error, timeout, invalid return). */
   error?: string;
@@ -126,6 +128,7 @@ export interface TriggerDto {
   symbol: string;
   signal: string;
   price: number;
+  quantity: number | null;
   message: string;
   triggeredAt: string;
 }
@@ -139,6 +142,82 @@ export interface UserSettingsDto {
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+}
+
+/** Broadcast over Socket.IO ('signal' / 'notification' events) when a rule triggers. */
+export interface SignalPayloadDto {
+  ruleId: string;
+  ruleName: string;
+  triggerId: string;
+  symbol: string;
+  signal: Signal;
+  price: number;
+  /** Suggested order size in shares. Only meaningful for BUY/SELL; null for NOTIFY. */
+  quantity: number | null;
+  message: string;
+  triggeredAt: string;
+}
+
+// ─── Trading App Activity ────────────────────────────────────────────────────
+
+export type TradeStatus = 'FILLED' | 'FAILED' | 'SIMULATED' | 'REJECTED';
+export type TradeSource = 'LIVE' | 'SIMULATION';
+
+export interface ReportTradeActivityDto {
+  ruleId?: string;
+  ruleName?: string;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  quantity: number;
+  price?: number;
+  status: TradeStatus;
+  orderId?: string;
+  message?: string;
+  source: TradeSource;
+}
+
+export interface TradeActivityDto {
+  id: string;
+  ruleId: string | null;
+  ruleName: string | null;
+  symbol: string;
+  side: string;
+  quantity: number;
+  price: number | null;
+  status: string;
+  orderId: string | null;
+  message: string | null;
+  source: string;
+  createdAt: string;
+}
+
+// ─── Subscription Plans ──────────────────────────────────────────────────────
+
+export type PlanId = 'FREE' | 'PLAN_399' | 'PLAN_799';
+
+export interface PlanDefinition {
+  id: PlanId;
+  name: string;
+  price: number;
+  dailyRuleLimit: number | null;
+  dailyChatLimit: number | null;
+  canDownloadTradingApp: boolean;
+  features: string[];
+}
+
+export interface PlanStatus {
+  plans: PlanDefinition[];
+  current: {
+    planId: PlanId;
+    planName: string;
+    canDownloadTradingApp: boolean;
+    usage: {
+      rulesToday: number;
+      rulesLimit: number | null;
+      chatToday: number;
+      chatLimit: number | null;
+    };
+  };
 }
 
 export interface BacktestResult {

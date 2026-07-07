@@ -2,10 +2,12 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { GeminiService } from '../services/gemini.service';
 import { requireAuth } from '../middleware/auth';
+import { UsageService } from '../services/usage.service';
 import type { ChatMessage } from '@stock-notifier/shared';
 
 const router = Router();
 const prisma = new PrismaClient();
+const usage = new UsageService(prisma);
 
 router.use(requireAuth);
 
@@ -82,6 +84,17 @@ router.post('/:sessionId', async (req: Request, res: Response, next: NextFunctio
 
   if (!message?.trim()) {
     res.status(400).json({ error: 'Message is required' });
+    return;
+  }
+
+  const quota = await usage.consumeQuota(req.user!.id, 'chat');
+  if (!quota.ok) {
+    res.status(403).json({
+      error: `已達 ${quota.planName} 每日對話次數上限（${quota.limit} 次），請升級方案或明天再試`,
+      code: 'LIMIT_EXCEEDED',
+      limit: quota.limit,
+      planId: quota.planId,
+    });
     return;
   }
 

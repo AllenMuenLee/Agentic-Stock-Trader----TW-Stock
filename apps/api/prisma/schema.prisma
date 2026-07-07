@@ -21,6 +21,13 @@ model User {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
   rules             Rule[]
+  tradeActivities   TradeActivity[]
+
+  // ─── Subscription plan & daily usage quotas ──────────────────────────────
+  plan              String    @default("FREE")   // "FREE" | "PLAN_399" | "PLAN_799"
+  rulesToday        Int       @default(0)        // AI rules created since usageResetAt
+  chatToday         Int       @default(0)        // conversational inputs sent since usageResetAt
+  usageResetAt      DateTime  @default(now())     // last time the daily counters were reset
 }
 
 model Rule {
@@ -48,6 +55,7 @@ model Trigger {
   symbol      String
   signal      String
   price       Float
+  quantity    Int?     // suggested order size in shares, for BUY/SELL from actionType "trade" rules
   message     String
   triggeredAt DateTime @default(now())
 }
@@ -76,6 +84,28 @@ model SymbolMeta {
   symbol    String   @id
   data      String   // JSON blob — arbitrary key/value pairs
   updatedAt DateTime @updatedAt
+}
+
+// Trade executions reported by the local trading-app CLI (running the user's own
+// Fubon Neo API session). The main server never sees Fubon credentials — only the
+// resulting order outcome — so this is purely for dashboard visibility.
+model TradeActivity {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  ruleId    String?
+  ruleName  String?
+  symbol    String
+  side      String   // "BUY" | "SELL"
+  quantity  Int
+  price     Float?
+  status    String   // "FILLED" | "FAILED" | "SIMULATED"
+  orderId   String?
+  message   String?
+  source    String   @default("LIVE") // "LIVE" | "SIMULATION"
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model ChatMessage {
