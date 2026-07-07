@@ -5,7 +5,7 @@ import express from 'express';
 import type { Socket } from 'socket.io-client';
 import { loadConfig, saveConfig } from './config';
 import { loginToServer } from './server-auth';
-import { connectSignalListener, SignalEvent } from './signal-listener';
+import { connectSignalListener, SignalEvent, SocketStatus } from './signal-listener';
 import { FubonClient } from './fubon-client';
 import { appendLocalActivity, readRecentLocalActivity, reportActivity } from './activity-log';
 import { addPendingOrder, listPendingOrders, takePendingOrder, PendingOrder } from './pending-orders';
@@ -39,6 +39,11 @@ interface Session {
   // in the local log and on the dashboard, not a different code path.
   simulate: boolean;
   aiUsername: string;
+  // The connect HTTP request returns before the socket.io handshake actually
+  // completes, so this tracks the real signal-feed state separately from
+  // "session exists" (which only means Fubon/AI股探 login succeeded).
+  socketStatus: SocketStatus;
+  socketDetail: string | null;
 }
 
 let session: Session | null = null;
@@ -143,7 +148,13 @@ interface ConnectBody {
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '..', 'public')));
+// This is a local dev-facing UI that changes often — never let the browser
+// cache a stale copy of index.html/app.js/style.css across restarts.
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res) => res.setHeader('Cache-Control', 'no-store'),
+}));
 
 app.get('/api/status', (_req, res) => {
   res.json({
@@ -151,6 +162,9 @@ app.get('/api/status', (_req, res) => {
     simulate: session?.simulate ?? null,
     aiUsername: session?.aiUsername ?? null,
     serverUrl: SERVER_URL,
+    // Real signal-feed state — "connected" above only means Fubon/AI股探 login succeeded.
+    socketStatus: session?.socketStatus ?? null,
+    socketDetail: session?.socketDetail ?? null,
   });
 });
 
@@ -239,8 +253,13 @@ app.post('/api/connect', async (req, res) => {
   // re-derived from TEST_CERT_PATH, never worth persisting.
   if (!body.simulate) saveConfig({ fubonId, fubonCertPath });
 
-  const socket = connectSignalListener(SERVER_URL, token, handleSignal);
-  session = { token, socket, fubon, simulate: !!body.simulate, aiUsername: body.aiUsername };
+  const socket = connectSignalListener(SERVER_URL, token, handleSignal, (status, detail) => {
+    if (session) { session.socketStatus = status; session.socketDetail = detail; }
+  });
+  session = {
+    token, socket, fubon, simulate: !!body.simulate, aiUsername: body.aiUsername,
+    socketStatus: 'connecting', socketDetail: null,
+  };
 
   res.json({ ok: true, simulate: session.simulate, serverUrl: SERVER_URL });
 });

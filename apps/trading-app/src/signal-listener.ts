@@ -13,20 +13,40 @@ export interface SignalEvent {
   triggeredAt: string;
 }
 
-/** Connects to the AI股探 server's per-user socket room and forwards only BUY/SELL signals — NOTIFY is alert-only and never triggers a trade. */
+export type SocketStatus = 'connecting' | 'connected' | 'error';
+
+/**
+ * Connects to the AI股探 server's per-user socket room and forwards only
+ * BUY/SELL signals — NOTIFY is alert-only and never triggers a trade.
+ *
+ * The HTTP request that triggers this returns long before the socket.io
+ * handshake actually completes, so `onStatusChange` is how the caller finds
+ * out whether the signal feed is really live (as opposed to just "Fubon/AI股探
+ * login succeeded").
+ */
 export function connectSignalListener(
   serverUrl: string,
   token: string,
   onTradeSignal: (event: SignalEvent) => void,
+  onStatusChange?: (status: SocketStatus, detail: string | null) => void,
 ): Socket {
   const socket = io(serverUrl, {
     auth: { token: `Bearer ${token}` },
     transports: ['websocket'],
   });
 
-  socket.on('connect', () => console.log(`[Signal] 已連線至 ${serverUrl}`));
-  socket.on('connect_error', (err: Error) => console.error('[Signal] 連線失敗:', err.message));
-  socket.on('disconnect', (reason: string) => console.warn(`[Signal] 連線中斷: ${reason}`));
+  socket.on('connect', () => {
+    console.log(`[Signal] 已連線至 ${serverUrl}`);
+    onStatusChange?.('connected', null);
+  });
+  socket.on('connect_error', (err: Error) => {
+    console.error('[Signal] 連線失敗:', err.message);
+    onStatusChange?.('error', err.message);
+  });
+  socket.on('disconnect', (reason: string) => {
+    console.warn(`[Signal] 連線中斷: ${reason}`);
+    onStatusChange?.('error', reason);
+  });
 
   socket.on('notification', (event: SignalEvent) => {
     if (event.signal === 'BUY' || event.signal === 'SELL') {

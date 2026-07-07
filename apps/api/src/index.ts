@@ -23,7 +23,6 @@ import { FugleService } from './services/fugle.service';
 import { NotificationService } from './services/notification.service';
 import { RuleEngine } from './engine/rule-engine';
 import { loadDataContext } from './engine/data-context';
-import { confirmThirtyMinuteSameColorTrade } from './engine/trade-filters';
 import { runPoolFilter } from './engine/sandbox';
 import { initSubscriptionManager, refreshSubscriptions, getTrackedSubscriptions } from './subscription-manager';
 import { redis, yfinance } from './singletons';
@@ -197,24 +196,6 @@ fugle.onTick(async (tick: TickData) => {
       }
 
       if (!result.triggered) continue;
-      if (
-        config.actionType === 'trade' &&
-        (result.signal === 'BUY' || result.signal === 'SELL')
-      ) {
-        const confirmation = confirmThirtyMinuteSameColorTrade(
-          dataContext,
-          tick.symbol,
-          currTimeSec,
-          tick.price,
-        );
-        if (!confirmation.allowed) {
-          console.log(
-            `[Engine] Rule "${rule.name}" trade signal skipped for ${tick.symbol}: ` +
-              confirmation.reason,
-          );
-          continue;
-        }
-      }
 
       // Suggested order size for BUY/SELL — the AI-generated rule code decides this;
       // DEFAULT_TRADE_QUANTITY only covers legacy/declarative rules or code that omits it.

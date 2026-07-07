@@ -75,16 +75,32 @@ button:hover { filter: brightness(1.05); }
 button:disabled { opacity: 0.6; cursor: not-allowed; }
 button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); width: auto; padding: 8px 14px; }
 
-.error {
-  color: var(--red);
-  font-size: 0.85rem;
-  margin-top: 10px;
-  margin-bottom: 0;
-}
+/* Dims and locks the whole form the instant connect is clicked — a visible,
+   whole-form reaction to the click, not just the button's own text change. */
+form.form-loading { opacity: 0.7; pointer-events: none; }
+
 .hidden { display: none !important; }
 
-.connected-line { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; font-size: 0.9rem; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--emerald); display: inline-block; }
+.status-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; font-size: 0.85rem; }
+.status-row:last-of-type { margin-bottom: 0; }
+.status-label { color: var(--muted); }
+.status-value { color: var(--text); font-weight: 500; }
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid;
+}
+.status-pill-ok { color: var(--emerald); background: rgba(52,211,153,0.1); border-color: rgba(52,211,153,0.3); }
+.status-pill-warn { color: var(--amber); background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.3); animation: pulse 1.4s ease-in-out infinite; }
+.status-pill-error { color: var(--red); background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.3); }
+
+#connectStatus { margin: 12px 0 0; }
 
 table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }

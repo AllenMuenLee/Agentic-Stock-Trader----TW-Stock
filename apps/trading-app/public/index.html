@@ -18,49 +18,58 @@
       </div>
     </div>
 
-    <form id="loginForm" class="card">
+    <form id="loginForm" class="card" novalidate>
       <div class="field">
         <label for="aiUsername">AI股探 帳號</label>
-        <input id="aiUsername" required autocomplete="username" />
+        <input id="aiUsername" autocomplete="username" />
       </div>
       <div class="field">
         <label for="aiPassword">AI股探 密碼</label>
-        <input id="aiPassword" type="password" required autocomplete="current-password" />
+        <input id="aiPassword" type="password" autocomplete="current-password" />
       </div>
       <div class="field checkbox-field">
         <label>
-          <input type="checkbox" id="simulate" />
+          <input type="checkbox" id="simulate" checked />
           使用富邦模擬交易環境（自動使用內建測試帳號與憑證，交易紀錄會標記為「模擬」）
         </label>
       </div>
-      <div id="fubonFields" class="fubon-fields">
+      <div id="fubonFields" class="fubon-fields hidden">
         <div class="field">
           <label for="fubonId">富邦帳號（身分證字號 / 統編）</label>
-          <input id="fubonId" required />
+          <input id="fubonId" />
         </div>
         <div class="field">
           <label for="fubonPassword">富邦密碼</label>
-          <input id="fubonPassword" type="password" required />
+          <input id="fubonPassword" type="password" />
         </div>
         <div class="field">
           <label for="fubonCertPath">富邦憑證檔案路徑 (.pfx)</label>
-          <input id="fubonCertPath" placeholder="C:\path\to\cert.pfx" required />
+          <input id="fubonCertPath" placeholder="C:\path\to\cert.pfx" />
         </div>
         <div class="field">
           <label for="fubonCertPassword">富邦憑證密碼</label>
-          <input id="fubonCertPassword" type="password" required />
+          <input id="fubonCertPassword" type="password" />
         </div>
       </div>
       <button type="submit" id="connectBtn">連線並開始監聽訊號</button>
-      <p id="loginError" class="error hidden"></p>
+      <p id="connectStatus" class="status-pill hidden"></p>
     </form>
 
     <div id="connectedPanel" class="card hidden">
-      <p class="connected-line">
-        <span class="dot"></span>
-        已連線 — <span id="modeLabel"></span>（<span id="usernameLabel"></span>）
-      </p>
-      <button id="disconnectBtn" class="secondary">中斷連線</button>
+      <div class="status-row">
+        <span class="status-label">登入狀態</span>
+        <span id="loginStatusBadge" class="status-pill status-pill-ok">✅ 登入成功</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">交易帳戶</span>
+        <span id="modeLabel" class="status-value"></span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">訊號 WebSocket</span>
+        <span id="socketStatusBadge" class="status-pill"></span>
+      </div>
+      <p class="hint" style="margin:10px 0 0">帳號：<span id="usernameLabel"></span></p>
+      <button id="disconnectBtn" class="secondary" style="margin-top:12px">中斷連線</button>
     </div>
 
     <div id="pendingSection" class="hidden">

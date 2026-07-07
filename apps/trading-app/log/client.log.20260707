@@ -1,0 +1,27 @@
+[2026-07-07 10:39:40.369615200 +08:00 INFO] [login] personal_id="41610792"
+[2026-07-07 10:39:40.409117800 +08:00 INFO] this account require 2fa
+[2026-07-07 10:39:40.489358700 +08:00 INFO] [future_option_mapping]: 49.8093ms
+[2026-07-07 10:39:40.517714500 +08:00 INFO] [future_option_mapping]: 26.0474ms
+[2026-07-07 10:39:40.645443700 +08:00 INFO] [future_option_mapping]: 126.7927ms
+[2026-07-07 10:39:40.704113300 +08:00 INFO] [future_option_mapping]: 53.2276ms
+[2026-07-07 10:39:47.758558300 +08:00 INFO] [logout] user manually logout
+[2026-07-07 10:46:05.214364900 +08:00 INFO] [login] personal_id="41610792"
+[2026-07-07 10:46:05.279137900 +08:00 INFO] this account require 2fa
+[2026-07-07 10:46:05.523815100 +08:00 INFO] [future_option_mapping]: 168.2886ms
+[2026-07-07 10:46:05.598697200 +08:00 INFO] [future_option_mapping]: 72.7559ms
+[2026-07-07 10:46:05.757400500 +08:00 INFO] [future_option_mapping]: 157.8708ms
+[2026-07-07 10:46:05.859504700 +08:00 INFO] [future_option_mapping]: 95.5739ms
+[2026-07-07 10:46:18.833372300 +08:00 INFO] [logout] user manually logout
+[2026-07-07 10:59:04.023015 +08:00 INFO] [login] personal_id="41610792"
+[2026-07-07 10:59:04.058071300 +08:00 INFO] this account require 2fa
+[2026-07-07 10:59:04.136748100 +08:00 INFO] [future_option_mapping]: 47.9768ms
+[2026-07-07 10:59:04.166451300 +08:00 INFO] [future_option_mapping]: 28.133ms
+[2026-07-07 10:59:04.249096200 +08:00 INFO] [future_option_mapping]: 82.0281ms
+[2026-07-07 10:59:04.306073400 +08:00 INFO] [future_option_mapping]: 50.9461ms
+[2026-07-07 10:59:05.557417700 +08:00 INFO] [logout] user manually logout
+[2026-07-07 11:36:47.737800100 +08:00 INFO] [login] personal_id="41610792"
+[2026-07-07 11:36:47.787374500 +08:00 INFO] this account require 2fa
+[2026-07-07 11:36:47.911809400 +08:00 INFO] [future_option_mapping]: 93.9774ms
+[2026-07-07 11:36:47.942361300 +08:00 INFO] [future_option_mapping]: 28.7079ms
+[2026-07-07 11:36:48.028585900 +08:00 INFO] [future_option_mapping]: 85.0906ms
+[2026-07-07 11:36:48.082180500 +08:00 INFO] [future_option_mapping]: 44.0193ms
