@@ -6,6 +6,7 @@ import { refreshSubscriptions } from '../subscription-manager';
 import { yfinance } from '../singletons';
 import { requireAuth } from '../middleware/auth';
 import { UsageService } from '../services/usage.service';
+import { getPlan } from '../config/plans';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -108,6 +109,19 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
       return;
     }
 
+    if (poolType === 'DYNAMIC') {
+      const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
+      if (!user) { res.status(404).json({ error: '找不到使用者' }); return; }
+      const plan = getPlan(user.plan);
+      if (!plan.canUseDynamicPool) {
+        res.status(403).json({
+          error: '此方案不支援動態選股池，請升級至 399 或 799 方案',
+          code: 'PLAN_REQUIRED',
+        });
+        return;
+      }
+    }
+
     const quota = await usage.consumeQuota(req.user!.id, 'rule');
     if (!quota.ok) {
       res.status(403).json({
@@ -169,6 +183,19 @@ router.patch('/:id', async (req: Request, res: Response, next: NextFunction) => 
       poolFilterCode?: string | null;
       symbols?: string[];
     };
+
+    if (poolType === 'DYNAMIC') {
+      const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
+      if (!user) { res.status(404).json({ error: '找不到使用者' }); return; }
+      const plan = getPlan(user.plan);
+      if (!plan.canUseDynamicPool) {
+        res.status(403).json({
+          error: '此方案不支援動態選股池，請升級至 399 或 799 方案',
+          code: 'PLAN_REQUIRED',
+        });
+        return;
+      }
+    }
 
     const updatedConfig = JSON.parse(rule.config) as RuleConfig;
     if (typeof code === 'string') updatedConfig.code = code;

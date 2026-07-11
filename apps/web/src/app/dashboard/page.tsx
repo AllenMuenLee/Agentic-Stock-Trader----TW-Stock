@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { api } from '@/lib/api';
+import { api, extractErrorMessage } from '@/lib/api';
 import {
   Play, Pause, Trash2, BarChart2, Clock,
   RefreshCw, ChevronDown, ChevronUp, Zap, AlertCircle, MessageSquare,
@@ -11,6 +11,7 @@ import {
 import type { RuleDto, TriggerDto, BacktestResult, PoolType } from '@stock-notifier/shared';
 import { JsCode } from '@/components/CodeView';
 import TradingActivityPanel from '@/components/TradingActivityPanel';
+import UsageQuotaBar from '@/components/UsageQuotaBar';
 
 interface RuleWithExtra extends RuleDto {
   recentTriggers?: TriggerDto[];
@@ -88,6 +89,16 @@ export default function DashboardPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editState, setEditState] = useState<EditState>({ code: '', poolType: 'FIXED', poolFilterCode: '', symbols: '' });
   const [saveLoading, setSaveLoading] = useState(false);
+  // Whether the signed-in user's plan may use DYNAMIC pool rules — fetched once,
+  // used to disable the toggle (with an upgrade hint) instead of letting the user
+  // hit a 403 from the server after filling in a filter.
+  const [canUseDynamicPool, setCanUseDynamicPool] = useState(true);
+
+  useEffect(() => {
+    api.getPlanStatus()
+      .then((s) => setCanUseDynamicPool(s.current.canUseDynamicPool))
+      .catch(() => {});
+  }, []);
 
   // Per-rule toggle: show all backtest signals vs. last 10
   const [showAllSignals, setShowAllSignals] = useState<Record<string, boolean>>({});
@@ -177,8 +188,8 @@ export default function DashboardPage() {
       await api.updateRule(id, payload);
       setEditingId(null);
       await loadRules();
-    } catch {
-      alert('儲存失敗，請稍後再試');
+    } catch (err) {
+      alert(extractErrorMessage(err, '儲存失敗，請稍後再試'));
     } finally {
       setSaveLoading(false);
     }
@@ -230,6 +241,8 @@ export default function DashboardPage() {
           重新整理
         </button>
       </div>
+
+      <UsageQuotaBar className="mb-4" />
 
       <TradingActivityPanel />
 
@@ -480,9 +493,13 @@ export default function DashboardPage() {
                         固定股票代號
                       </button>
                       <button
-                        onClick={() => setEditState((s) => ({ ...s, poolType: 'DYNAMIC' }))}
+                        onClick={() => canUseDynamicPool && setEditState((s) => ({ ...s, poolType: 'DYNAMIC' }))}
+                        disabled={!canUseDynamicPool}
+                        title={canUseDynamicPool ? undefined : '此方案不支援動態選股池，請升級至 399 或 799 方案'}
                         className={`text-xs px-3 py-1 rounded-full border transition-colors ${
-                          editState.poolType === 'DYNAMIC'
+                          !canUseDynamicPool
+                            ? 'border-slate-800 text-slate-700 cursor-not-allowed'
+                            : editState.poolType === 'DYNAMIC'
                             ? 'bg-purple-500/20 border-purple-500/50 text-purple-400'
                             : 'border-slate-700 text-slate-500 hover:text-slate-300'
                         }`}
@@ -490,6 +507,12 @@ export default function DashboardPage() {
                         動態選股池
                       </button>
                     </div>
+                    {!canUseDynamicPool && (
+                      <p className="text-xs text-amber-500/80">
+                        動態選股池需要 399 或 799 方案，
+                        <Link href="/plans" className="underline hover:text-amber-400">前往升級</Link>
+                      </p>
+                    )}
 
                     {editState.poolType === 'FIXED' ? (
                       <div>

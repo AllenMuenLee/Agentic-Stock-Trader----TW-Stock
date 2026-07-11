@@ -20,6 +20,20 @@ export async function fetchJson<T>(path: string, options?: RequestInit): Promise
   return res.json() as Promise<T>;
 }
 
+/** Extracts the server's `{ error: "..." }` message from a fetchJson-thrown Error, falling back to `fallback` when the body wasn't JSON or had no `error` field. */
+export function extractErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error) {
+    try {
+      const jsonPart = err.message.slice(err.message.indexOf('{'));
+      const body = JSON.parse(jsonPart) as { error?: string };
+      if (body?.error) return body.error;
+    } catch {
+      // non-JSON error body — keep default message
+    }
+  }
+  return fallback;
+}
+
 export const api = {
   // Auth
   updatePassword: (data: { currentPassword: string; newPassword: string }) =>

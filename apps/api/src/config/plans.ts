@@ -10,6 +10,7 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
     dailyRuleLimit: 2,
     dailyChatLimit: 10,
     canDownloadTradingApp: false,
+    canUseDynamicPool: false,
     features: ['每天最多建立 2 個 AI 規則', '每天最多 10 次對話輸入'],
   },
   PLAN_399: {
@@ -19,16 +20,18 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
     dailyRuleLimit: 7,
     dailyChatLimit: 35,
     canDownloadTradingApp: true,
-    features: ['每天最多建立 7 個 AI 規則', '每天最多 35 次對話輸入', '可下載獨立交易應用程式'],
+    canUseDynamicPool: true,
+    features: ['每天最多建立 7 個 AI 規則', '每天最多 35 次對話輸入', '可下載獨立交易應用程式', '可使用動態選股池'],
   },
   PLAN_799: {
     id: 'PLAN_799',
     name: '799 方案',
     price: 799,
-    dailyRuleLimit: null,
-    dailyChatLimit: null,
+    dailyRuleLimit: 15,
+    dailyChatLimit: 150,
     canDownloadTradingApp: true,
-    features: ['AI 規則數與對話次數無限制', '可下載獨立交易應用程式'],
+    canUseDynamicPool: true,
+    features: ['每天最多建立 15 個 AI 規則', '每天最多 150 次對話輸入', '可下載獨立交易應用程式', '可使用動態選股池'],
   },
 };
 

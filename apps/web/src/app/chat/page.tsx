@@ -4,8 +4,9 @@ import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Send, Bot, User, Trash2, Plus, MessageSquare, ArrowLeft, Zap, Database, ChevronRight, Clock } from 'lucide-react';
 import Link from 'next/link';
-import { api, BASE } from '@/lib/api';
+import { api, BASE, extractErrorMessage } from '@/lib/api';
 import MarkdownMessage from '@/components/chat/MarkdownMessage';
+import UsageQuotaBar from '@/components/UsageQuotaBar';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -128,6 +129,8 @@ function ChatHistoryList() {
           新對話
         </button>
       </div>
+
+      <UsageQuotaBar className="mb-8" />
 
       {/* Loading */}
       {loading && (
@@ -359,15 +362,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
         { role: 'assistant', content: `✅ 規則「${name}」已成功儲存！您可以在 Dashboard 頁面查看和管理它。` },
       ]);
     } catch (err) {
-      let msg = '儲存規則失敗，請稍後再試';
-      if (err instanceof Error) {
-        try {
-          const jsonPart = err.message.slice(err.message.indexOf('{'));
-          const body = JSON.parse(jsonPart);
-          if (body?.error) msg = body.error;
-        } catch { /* non-JSON error body — keep default message */ }
-      }
-      alert(msg);
+      alert(extractErrorMessage(err, '儲存規則失敗，請稍後再試'));
     }
   };
 
@@ -400,6 +395,7 @@ function ChatSession({ sessionId }: { sessionId: string }) {
           <h1 className="font-semibold text-slate-100 text-sm">AI 助手對話</h1>
           <p className="text-xs text-slate-500">{sessionId}</p>
         </div>
+        <UsageQuotaBar variant="compact" metric="chat" />
         <button onClick={clearChat} className="btn-ghost text-xs flex items-center gap-1.5">
           <Trash2 className="w-3.5 h-3.5" />
           清除

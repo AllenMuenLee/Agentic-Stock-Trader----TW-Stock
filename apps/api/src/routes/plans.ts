@@ -18,6 +18,7 @@ function serializeStatus(user: { plan: string; rulesToday: number; chatToday: nu
       planId: plan.id,
       planName: plan.name,
       canDownloadTradingApp: plan.canDownloadTradingApp,
+      canUseDynamicPool: plan.canUseDynamicPool,
       usage: {
         rulesToday: user.rulesToday,
         rulesLimit: plan.dailyRuleLimit,

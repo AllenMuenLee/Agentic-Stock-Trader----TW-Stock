@@ -270,6 +270,8 @@ export interface PlanDefinition {
   dailyRuleLimit: number | null;
   dailyChatLimit: number | null;
   canDownloadTradingApp: boolean;
+  /** Whether this plan may create/edit rules with poolType "DYNAMIC" (rules that filter a whole category of stocks via poolFilterCode, rather than a fixed symbol list). */
+  canUseDynamicPool: boolean;
   features: string[];
 }
 
@@ -279,6 +281,7 @@ export interface PlanStatus {
     planId: PlanId;
     planName: string;
     canDownloadTradingApp: boolean;
+    canUseDynamicPool: boolean;
     usage: {
       rulesToday: number;
       rulesLimit: number | null;
