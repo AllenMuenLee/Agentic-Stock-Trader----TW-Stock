@@ -49,6 +49,9 @@ export class RuleEngine {
       signal: result.signal,
       message: result.message,
       quantity: result.quantity,
+      priceType: result.priceType,
+      timeInForce: result.timeInForce,
+      limitPrice: result.limitPrice,
     };
   }
 

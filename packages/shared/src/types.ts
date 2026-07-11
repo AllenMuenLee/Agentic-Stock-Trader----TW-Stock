@@ -1,3 +1,5 @@
+import type { TaiwanMarketType, TaiwanPriceType, TaiwanTimeInForce } from './market-session';
+
 // ─── Tick / Market Data ──────────────────────────────────────────────────────
 
 export interface TickData {
@@ -83,8 +85,25 @@ export interface RuleResult {
   triggered: boolean;
   signal?: Signal;
   message?: string;
-  /** Suggested order size in shares, for BUY/SELL signals from `actionType: "trade"` rules. AI-generated code sets this explicitly; falls back to a default when absent. */
-  quantity?: number;
+  /**
+   * Suggested order size in shares, for BUY/SELL signals from `actionType: "trade"` rules.
+   * AI-generated code sets this explicitly; falls back to a default when absent.
+   * `'ALL'` means "sell my entire position" (SELL) or "spend all available cash" (BUY) —
+   * the API server never resolves this itself (it doesn't know real account numbers);
+   * only the trading-app does, right before sending the order to Fubon.
+   */
+  quantity?: number | 'ALL';
+  /**
+   * Optional hints for order routing on BUY/SELL trade signals — never required.
+   * When omitted, the server derives sensible defaults via `resolveOrderRouting()`
+   * (market.ts) based on the current Taiwan trading session and quantity. These
+   * are overridden/corrected automatically whenever the resolved market segment
+   * has a non-negotiable rule (e.g. 零股 must be 限價 ROD) — see `resolveOrderRouting`.
+   */
+  priceType?: TaiwanPriceType;
+  timeInForce?: TaiwanTimeInForce;
+  /** Desired limit price when `priceType` is `'Limit'`. Defaults to the latest reference price if omitted. */
+  limitPrice?: number;
   data?: Record<string, unknown>;
   /** Populated when code-rule execution failed (syntax/runtime error, timeout, invalid return). */
   error?: string;
@@ -115,7 +134,8 @@ export interface RuleDto {
   config: RuleConfig;
   sessionId: string | null;
   isActive: boolean;
-  winRate: number | null;
+  /** Realized return % (not win rate) from the most recent backtest run. */
+  returnRate: number | null;
   createdAt: string;
   updatedAt: string;
   triggersCount: number;
@@ -129,6 +149,8 @@ export interface TriggerDto {
   signal: string;
   price: number;
   quantity: number | null;
+  /** `'ALL'` when the rule returned the "all position / all cash" sentinel — `quantity` is null in that case since the real number isn't known until the trading-app resolves it. */
+  quantitySpec: string | null;
   message: string;
   triggeredAt: string;
 }
@@ -152,10 +174,44 @@ export interface SignalPayloadDto {
   symbol: string;
   signal: Signal;
   price: number;
-  /** Suggested order size in shares. Only meaningful for BUY/SELL; null for NOTIFY. */
-  quantity: number | null;
+  /**
+   * Suggested order size in shares. Only meaningful for BUY/SELL; null for NOTIFY.
+   * `'ALL'` is an unresolved sentinel — the trading-app resolves it against its own
+   * live account cache right before sending the order.
+   */
+  quantity: number | 'ALL' | null;
+  /**
+   * Resolved Taiwan order routing (market segment / price type / time-in-force /
+   * limit price), computed by `resolveOrderRouting()`. Null on all four fields
+   * when `quantity === 'ALL'` — routing can't be resolved until the trading-app
+   * knows the real account numbers, so it resolves this itself right before
+   * sending the order (`orderAllowed` stays `true` in that deferred case).
+   * `orderAllowed: false` means a concrete-quantity signal was already rejected
+   * here (e.g. outside trading hours) — `orderNote` holds `OrderRouting.reason`
+   * in that case, or `OrderRouting.note` (an auto-correction explanation, e.g.
+   * "零股交易僅允許限價 ROD") when `orderAllowed` is `true`.
+   */
+  marketType: TaiwanMarketType | null;
+  priceType: TaiwanPriceType | null;
+  timeInForce: TaiwanTimeInForce | null;
+  limitPrice: number | null;
+  orderAllowed: boolean;
+  orderNote: string | null;
   message: string;
   triggeredAt: string;
+}
+
+// ─── Account Snapshot (trading-app → API, cached for rule evaluation) ────────
+
+export interface AccountPosition {
+  symbol: string;
+  quantity: number;
+}
+
+/** Reported periodically by the trading-app from its own live Fubon session — never contains credentials. */
+export interface ReportAccountSnapshotDto {
+  cash: number;
+  positions: AccountPosition[];
 }
 
 // ─── Trading App Activity ────────────────────────────────────────────────────
@@ -174,6 +230,13 @@ export interface ReportTradeActivityDto {
   orderId?: string;
   message?: string;
   source: TradeSource;
+  /** Milliseconds from signal-triggered to order-sent (includes user confirmation time). Absent for REJECTED — no order was ever sent. */
+  latencyMs?: number;
+  /** Resolved Taiwan order routing actually used for this order. Absent for REJECTED (no order was ever routed/sent). */
+  marketType?: TaiwanMarketType;
+  priceType?: TaiwanPriceType;
+  timeInForce?: TaiwanTimeInForce;
+  limitPrice?: number;
 }
 
 export interface TradeActivityDto {
@@ -188,6 +251,11 @@ export interface TradeActivityDto {
   orderId: string | null;
   message: string | null;
   source: string;
+  latencyMs: number | null;
+  marketType: string | null;
+  priceType: string | null;
+  timeInForce: string | null;
+  limitPrice: number | null;
   createdAt: string;
 }
 
@@ -222,15 +290,38 @@ export interface PlanStatus {
 
 export interface BacktestResult {
   totalSignals: number;
-  winCount: number;
-  lossCount: number;
-  winRate: number;
+  /**
+   * Realized return over the whole backtest window, as a % of `totalInvested`.
+   * Simulated as a real position (BUY adds shares at cost, SELL closes at most
+   * as many shares as are held, no shorting) rather than assuming every signal
+   * is exited on the very next bar — the rule itself never specifies an exit.
+   */
+  returnRate: number;
+  /**
+   * Mark-to-market return of whatever position is still open (bought but never
+   * sold) as of the last bar, as a % of `openPositionCost`. `null` when nothing
+   * was left open at the end of the backtest.
+   */
+  unrealizedReturnRate: number | null;
+  /** Total $ profit/loss actually realized from completed (bought-then-sold) shares. */
+  realizedPnL: number;
+  /** Total $ deployed across every BUY signal — the denominator for `returnRate`. */
+  totalInvested: number;
+  /** Mark-to-market $ gain/loss on the still-open position, if any. */
+  unrealizedPnL: number;
+  /** Cost basis of the still-open position, if any — the denominator for `unrealizedReturnRate`. */
+  openPositionCost: number;
   signals: {
     date: string;
     symbol: string;
     signal: Signal;
     price: number;
+    quantity: number | null;
     triggered: boolean;
-    profitPercent?: number;
+    /** Resolved Taiwan order routing for this simulated fill. Null when the signal didn't actually execute (e.g. insufficient cash/shares, or outside trading hours). */
+    marketType: TaiwanMarketType | null;
+    priceType: TaiwanPriceType | null;
+    timeInForce: TaiwanTimeInForce | null;
+    limitPrice: number | null;
   }[];
 }

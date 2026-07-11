@@ -83,6 +83,24 @@ async function loadDefaults() {
   if (defaults.fubonCertPath) $('fubonCertPath').value = defaults.fubonCertPath;
 }
 
+/** Formats a latency in ms as e.g. "1.2s" or "850ms"; "—" when unknown (e.g. rejected orders). */
+function formatLatency(latencyMs) {
+  if (latencyMs == null) return '—';
+  if (latencyMs < 1000) return `${latencyMs}ms`;
+  return `${(latencyMs / 1000).toFixed(1)}s`;
+}
+
+const MARKET_TYPE_LABEL = { Common: '整股', Odd: '零股', Fixing: '盤後定價' };
+const PRICE_TYPE_LABEL = { Limit: '限價', Market: '市價' };
+
+/** Formats resolved Taiwan order routing as e.g. "整股·限價·ROD@620"; "—" when not (yet) resolved. */
+function formatRouting(marketType, priceType, timeInForce, limitPrice) {
+  if (!marketType || !priceType || !timeInForce) return '—';
+  const parts = [MARKET_TYPE_LABEL[marketType] || marketType, PRICE_TYPE_LABEL[priceType] || priceType, timeInForce];
+  const label = parts.join('·');
+  return priceType === 'Limit' && limitPrice != null ? `${label}@${limitPrice}` : label;
+}
+
 function statusBadgeClass(status) {
   if (status === 'FILLED') return 'status-badge status-filled';
   if (status === 'SIMULATED') return 'status-badge status-simulated';
@@ -110,9 +128,11 @@ async function loadActivity() {
       <td class="${a.side === 'BUY' ? 'side-buy' : 'side-sell'}">${a.side}</td>
       <td>${a.symbol}</td>
       <td>${a.quantity}</td>
+      <td>${formatRouting(a.marketType, a.priceType, a.timeInForce, a.limitPrice)}</td>
       <td><span class="${statusBadgeClass(a.status)}">${a.status}</span></td>
       <td class="${a.source === 'SIMULATION' ? 'source-sim' : ''}">${a.source === 'SIMULATION' ? '模擬' : '實盤'}</td>
       <td>${a.ruleName || ''}</td>
+      <td>${formatLatency(a.latencyMs)}</td>
     `;
     tbody.appendChild(tr);
   }
@@ -149,6 +169,10 @@ async function loadPendingOrders() {
   pendingList.innerHTML = '';
 
   for (const o of orders) {
+    // orderAllowed is only ever a firm rejection for a concrete (non-'ALL')
+    // quantity — 'ALL' orders show routing as unresolved ("—") until confirmed,
+    // since the real quantity (and therefore market segment) isn't known yet.
+    const blocked = o.orderAllowed === false;
     const card = document.createElement('div');
     card.className = 'pending-card';
     card.innerHTML = `
@@ -156,17 +180,21 @@ async function loadPendingOrders() {
         <span class="pulse"></span>
         <span class="${o.signal === 'BUY' ? 'side-buy' : 'side-sell'}">${o.signal}</span>
         <span>${o.symbol}</span>
-        <span>x${o.quantity}</span>
+        <span>x${o.quantity === 'ALL' ? '全部' : o.quantity}</span>
         <span>@ ${o.price}</span>
+        <span>${formatRouting(o.marketType, o.priceType, o.timeInForce, o.limitPrice)}</span>
         <span style="margin-left:auto;color:var(--muted);font-size:0.75rem">${o.ruleName || ''}</span>
       </div>
       <p class="pending-message">${o.message}</p>
+      ${blocked ? `<p class="pending-warning">⚠ ${o.orderNote || '目前無法送出委託'}</p>` : ''}
       <div class="pending-actions">
-        <button class="btn-confirm" data-action="confirm">確認下單</button>
+        <button class="btn-confirm" data-action="confirm" ${blocked ? 'disabled title="目前非有效交易時段，無法下單"' : ''}>確認下單</button>
         <button class="btn-reject" data-action="reject">拒絕</button>
       </div>
     `;
-    card.querySelector('[data-action="confirm"]').addEventListener('click', () => respondToPendingOrder(o.id, 'confirm'));
+    if (!blocked) {
+      card.querySelector('[data-action="confirm"]').addEventListener('click', () => respondToPendingOrder(o.id, 'confirm'));
+    }
     card.querySelector('[data-action="reject"]').addEventListener('click', () => respondToPendingOrder(o.id, 'reject'));
     pendingList.appendChild(card);
   }

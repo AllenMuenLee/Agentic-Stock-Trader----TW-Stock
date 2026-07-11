@@ -9,7 +9,9 @@ import { connectSignalListener, SignalEvent, SocketStatus } from './signal-liste
 import { FubonClient } from './fubon-client';
 import { appendLocalActivity, readRecentLocalActivity, reportActivity } from './activity-log';
 import { addPendingOrder, listPendingOrders, takePendingOrder, PendingOrder } from './pending-orders';
+import { startAccountSync, stopAccountSync, getCachedAccount } from './account-sync';
 import { openBrowser } from './open-browser';
+import { resolveOrderRouting } from './market-session';
 
 // The AI股探 server address is an operator setting, not something the end user
 // should ever type in — it comes from the environment only.
@@ -61,10 +63,43 @@ function handleSignal(event: SignalEvent): void {
     signal: event.signal,
     quantity,
     price: event.price,
+    // Preview only — the authoritative routing decision is recomputed fresh
+    // against the actual confirm-time clock in executeOrder(), since the user
+    // may confirm well after the signal fired (session could have changed).
+    marketType: event.marketType,
+    priceType: event.priceType,
+    timeInForce: event.timeInForce,
+    limitPrice: event.limitPrice,
+    orderAllowed: event.orderAllowed,
+    orderNote: event.orderNote,
     message: event.message,
+    triggeredAt: event.triggeredAt,
   });
 
   console.log(`[待確認] ${order.signal} ${order.symbol} x${order.quantity} @ ${order.price} — ${order.message}`);
+}
+
+/**
+ * Resolves an 'ALL' quantity against the freshest locally-cached account
+ * snapshot (see account-sync.ts) — never a fresh API call, so this never adds
+ * latency to order placement. Returns 0 (and the caller treats that as "can't
+ * place this order") when there's no snapshot yet or nothing to sell/spend.
+ */
+function resolveQuantity(order: PendingOrder): number {
+  if (order.quantity !== 'ALL') return order.quantity;
+
+  const account = getCachedAccount();
+  if (!account) return 0;
+
+  if (order.signal === 'SELL') {
+    return account.positions.find((p) => p.symbol === order.symbol)?.quantity ?? 0;
+  }
+
+  // BUY 'ALL' = spend all available cash, rounded down to whole 張 (1000-share
+  // lots), with a small buffer held back for commission/slippage.
+  if (order.price <= 0) return 0;
+  const lots = Math.floor((account.cash * 0.995) / order.price / 1000);
+  return Math.max(0, lots * 1000);
 }
 
 /** Actually places the order with Fubon after the user confirms a pending order in the UI. */
@@ -72,53 +107,111 @@ async function executeOrder(order: PendingOrder): Promise<void> {
   const s = session;
   if (!s) throw new Error('尚未連線');
 
+  const quantity = resolveQuantity(order);
+  const latencyMs = Date.now() - new Date(order.triggeredAt).getTime();
+
+  if (quantity <= 0) {
+    const message = order.signal === 'SELL' ? '目前無持股可全部賣出' : '可用現金不足以買進整張股票';
+    console.error(`[下單失敗] ${order.signal} ${order.symbol}: ${message}`);
+    appendLocalActivity({
+      symbol: order.symbol, side: order.signal, quantity: 0, status: 'FAILED',
+      orderId: null, message, source: s.simulate ? 'SIMULATION' : 'LIVE',
+      ruleName: order.ruleName, latencyMs, createdAt: new Date().toISOString(),
+    });
+    await reportActivity(SERVER_URL, s.token, {
+      ruleId: order.ruleId, ruleName: order.ruleName, symbol: order.symbol, side: order.signal,
+      quantity: 0, price: order.price, status: 'FAILED', message,
+      source: s.simulate ? 'SIMULATION' : 'LIVE', latencyMs,
+    });
+    throw new Error(message);
+  }
+
+  // Always recomputed fresh against the current wall-clock time, not reused from
+  // the (possibly stale) preview on `order` — the user may confirm well after
+  // the signal fired, and the trading session can change in between.
+  const routing = resolveOrderRouting(quantity, Math.floor(Date.now() / 1000), order.price, {
+    priceType: order.priceType ?? undefined,
+    timeInForce: order.timeInForce ?? undefined,
+    limitPrice: order.limitPrice ?? undefined,
+  });
+
+  if (!routing.allowed || !routing.marketType || !routing.priceType || !routing.timeInForce) {
+    const message = routing.reason ?? '目前無法送出委託';
+    console.error(`[下單失敗] ${order.signal} ${order.symbol}: ${message}`);
+    appendLocalActivity({
+      symbol: order.symbol, side: order.signal, quantity: 0, status: 'FAILED',
+      orderId: null, message, source: s.simulate ? 'SIMULATION' : 'LIVE',
+      ruleName: order.ruleName, latencyMs, createdAt: new Date().toISOString(),
+    });
+    await reportActivity(SERVER_URL, s.token, {
+      ruleId: order.ruleId, ruleName: order.ruleName, symbol: order.symbol, side: order.signal,
+      quantity: 0, price: order.price, status: 'FAILED', message,
+      source: s.simulate ? 'SIMULATION' : 'LIVE', latencyMs,
+    });
+    throw new Error(message);
+  }
+
   try {
     const result = await s.fubon.placeOrder({
       symbol: order.symbol,
       side: order.signal === 'BUY' ? 'Buy' : 'Sell',
-      quantity: order.quantity,
+      quantity: routing.quantity,
+      marketType: routing.marketType,
+      priceType: routing.priceType,
+      timeInForce: routing.timeInForce,
+      limitPrice: routing.limitPrice,
     });
     console.log(`[下單成功] ${order.signal} ${order.symbol}`, result.raw ?? result);
     const status = s.simulate ? 'SIMULATED' : 'FILLED';
     appendLocalActivity({
-      symbol: order.symbol, side: order.signal, quantity: order.quantity, status,
+      symbol: order.symbol, side: order.signal, quantity: routing.quantity, status,
       orderId: result.orderId, message: order.message, source: s.simulate ? 'SIMULATION' : 'LIVE',
-      ruleName: order.ruleName, createdAt: new Date().toISOString(),
+      ruleName: order.ruleName, latencyMs, createdAt: new Date().toISOString(),
+      marketType: routing.marketType, priceType: routing.priceType, timeInForce: routing.timeInForce, limitPrice: routing.limitPrice,
     });
     await reportActivity(SERVER_URL, s.token, {
       ruleId: order.ruleId, ruleName: order.ruleName, symbol: order.symbol, side: order.signal,
-      quantity: order.quantity, price: order.price, status, orderId: result.orderId,
-      message: order.message, source: s.simulate ? 'SIMULATION' : 'LIVE',
+      quantity: routing.quantity, price: order.price, status, orderId: result.orderId,
+      message: order.message, source: s.simulate ? 'SIMULATION' : 'LIVE', latencyMs,
+      marketType: routing.marketType, priceType: routing.priceType, timeInForce: routing.timeInForce,
+      limitPrice: routing.limitPrice ?? undefined,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[下單失敗] ${order.signal} ${order.symbol}:`, message);
     appendLocalActivity({
-      symbol: order.symbol, side: order.signal, quantity: order.quantity, status: 'FAILED',
+      symbol: order.symbol, side: order.signal, quantity: routing.quantity, status: 'FAILED',
       orderId: null, message, source: s.simulate ? 'SIMULATION' : 'LIVE',
-      ruleName: order.ruleName, createdAt: new Date().toISOString(),
+      ruleName: order.ruleName, latencyMs, createdAt: new Date().toISOString(),
+      marketType: routing.marketType, priceType: routing.priceType, timeInForce: routing.timeInForce, limitPrice: routing.limitPrice,
     });
     await reportActivity(SERVER_URL, s.token, {
       ruleId: order.ruleId, ruleName: order.ruleName, symbol: order.symbol, side: order.signal,
-      quantity: order.quantity, price: order.price, status: 'FAILED', message,
-      source: s.simulate ? 'SIMULATION' : 'LIVE',
+      quantity: routing.quantity, price: order.price, status: 'FAILED', message,
+      source: s.simulate ? 'SIMULATION' : 'LIVE', latencyMs,
+      marketType: routing.marketType, priceType: routing.priceType, timeInForce: routing.timeInForce,
+      limitPrice: routing.limitPrice ?? undefined,
     });
     throw err;
   }
 }
 
-/** Records a user-declined signal as a REJECTED activity — no order is ever sent to Fubon. */
+/** Records a user-declined signal as a REJECTED activity — no order is ever sent to Fubon, so no latency is recorded. */
 async function recordRejection(order: PendingOrder): Promise<void> {
   const s = session;
   const source = s?.simulate ? 'SIMULATION' : 'LIVE';
+  // Best-effort resolution just for display — a rejected 'ALL' order was never
+  // actually sized against Fubon, so this may read 0 if no account snapshot exists yet.
+  const quantity = resolveQuantity(order);
   appendLocalActivity({
-    symbol: order.symbol, side: order.signal, quantity: order.quantity, status: 'REJECTED',
-    orderId: null, message: order.message, source, ruleName: order.ruleName, createdAt: new Date().toISOString(),
+    symbol: order.symbol, side: order.signal, quantity, status: 'REJECTED',
+    orderId: null, message: order.message, source, ruleName: order.ruleName,
+    latencyMs: null, createdAt: new Date().toISOString(),
   });
   if (s) {
     await reportActivity(SERVER_URL, s.token, {
       ruleId: order.ruleId, ruleName: order.ruleName, symbol: order.symbol, side: order.signal,
-      quantity: order.quantity, price: order.price, status: 'REJECTED', message: order.message, source,
+      quantity, price: order.price, status: 'REJECTED', message: order.message, source,
     });
   }
 }
@@ -127,6 +220,7 @@ async function disconnectSession(): Promise<void> {
   if (!session) return;
   const { socket, fubon } = session;
   session = null;
+  stopAccountSync();
   socket.disconnect();
   try {
     await fubon.logout();
@@ -260,6 +354,7 @@ app.post('/api/connect', async (req, res) => {
     token, socket, fubon, simulate: !!body.simulate, aiUsername: body.aiUsername,
     socketStatus: 'connecting', socketDetail: null,
   };
+  startAccountSync(fubon, SERVER_URL, token);
 
   res.json({ ok: true, simulate: session.simulate, serverUrl: SERVER_URL });
 });

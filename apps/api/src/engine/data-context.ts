@@ -2,6 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import type { OHLCVBar } from '../types/rule';
 import type { RedisService, Sample } from '../services/redis.service';
 import * as indicators from './indicators';
+import { getMarketSession, resolveOrderRouting, type MarketSessionInfo, type OrderRouting } from '@stock-notifier/shared';
 
 export type { Sample } from '../services/redis.service';
 
@@ -71,6 +72,35 @@ export interface DataContext {
    * offset=0 → latest completed bar, offset=1 → the one before, etc.
    */
   get_candle: (stock: string, interval: string, offset?: number) => CandleBar | undefined;
+  /**
+   * Currently held shares of `stock` in the user's real Fubon account (live) or
+   * the backtest's own simulated position (backtest). 0 when none held or when
+   * no account data has been reported yet.
+   *
+   * Live: sourced from the latest `AccountSnapshot` the trading-app pushed —
+   * this context object itself is shared across every rule evaluated on a tick,
+   * so the caller (index.ts) rebinds this per-rule to the evaluating rule's own
+   * userId before running the sandbox; it is NOT baked in here.
+   */
+  get_position: (stock: string) => number;
+  /**
+   * Available cash in the user's real Fubon account. `undefined` when no
+   * account snapshot has been reported yet, or in backtest (no cash pool is
+   * simulated there — live-only, same as `get_meta`).
+   */
+  get_cash: () => number | undefined;
+  /** Which Taiwan trading session is currently open (整股/零股 intraday, 盤後定價/零股, or closed). */
+  get_market_session: () => MarketSessionInfo;
+  /**
+   * Resolves the exact order routing (market segment / price type / time-in-force /
+   * limit price) a BUY/SELL signal for `quantity` shares should use right now.
+   * Optional rule-code return fields `priceType`/`timeInForce`/`limitPrice` are only
+   * honored when the resolved market segment allows a choice (盤中整股) — 零股/盤後定價
+   * force their own non-negotiable combination regardless of what's passed in.
+   * Call this and fold the result into your final `return { signal, quantity, ... }`
+   * — or omit it entirely and the server derives the same routing automatically.
+   */
+  resolve_order_type: (quantity: number) => OrderRouting;
 }
 
 // ─── Low-level helpers ────────────────────────────────────────────────────────
@@ -336,7 +366,26 @@ export async function loadDataContext(opts: {
       const idx = b.length - 1 - offset;
       return idx >= 0 ? b[idx] : undefined;
     },
+    // Placeholders — this context is shared across every rule evaluated on a
+    // tick regardless of owning user, so the real per-user values are bound by
+    // the caller (index.ts's per-rule loop) right before evaluation.
+    get_position: () => 0,
+    get_cash: () => undefined,
+    get_market_session: () => getMarketSession(currTimeSec),
+    resolve_order_type: (quantity) => resolveOrderRouting(quantity, currTimeSec, latestValue(samplesOf(primarySymbol), 'price')),
   };
+}
+
+/**
+ * For daily-bar contexts (`buildBarContext`), there's no real intraday timestamp —
+ * each bar just marks a calendar day. Synthesizes a representative instant inside
+ * the regular 整股 session (09:01 Taipei) on that day so session-aware helpers
+ * (`get_market_session`/`resolve_order_type`) return sensible results instead of
+ * always reading as "market closed" against a literal midnight bar timestamp.
+ */
+function taipeiTradingInstant(date: Date): number {
+  const taipeiDateStr = date.toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+  return Math.floor(new Date(`${taipeiDateStr}T09:01:00+08:00`).getTime() / 1000);
 }
 
 // Intraday intervals in preference order (finest first) for get_data sample selection
@@ -355,6 +404,7 @@ export function buildIntradayBarContext(
   allDailyBars: OHLCVBar[],
   intradayBars: Map<string, CandleBar[]>,
   currentTimeSec: number,
+  currentShares = 0,
 ): DataContext {
   // Daily bars whose date falls on or before the current bar's calendar day
   const cutoffMs = new Date(currentTimeSec * 1000);
@@ -453,6 +503,13 @@ export function buildIntradayBarContext(
       const idx = cutoffIdx - offset;
       return idx >= 0 ? all[idx] : undefined;
     },
+    // No real account in backtest — get_position mirrors the backtest's own
+    // simulated running position (already tracked by the caller); get_cash has
+    // no simulated cash pool to draw from, live-only, same as get_meta.
+    get_position: (s) => (s === symbol ? currentShares : 0),
+    get_cash: () => undefined,
+    get_market_session: () => getMarketSession(currentTimeSec),
+    resolve_order_type: (quantity) => resolveOrderRouting(quantity, currentTimeSec, latestValue(samples, 'price')),
   };
 }
 
@@ -470,12 +527,13 @@ export function buildBarContext(
   bars: OHLCVBar[],
   uptoIndex: number,
   intradayBars?: Map<string, CandleBar[]>,
+  currentShares = 0,
 ): DataContext {
   const slice = bars.slice(0, uptoIndex + 1);
   const samples = barsToSamples(slice);
   const currBar = slice[slice.length - 1];
   const currTimeSec = currBar
-    ? Math.floor(currBar.date.getTime() / 1000)
+    ? taipeiTradingInstant(currBar.date)
     : Math.floor(Date.now() / 1000);
   // Include bars that opened before midnight of the *next* day
   const currDayEndSec = currTimeSec + 86400;
@@ -511,5 +569,9 @@ export function buildBarContext(
       const idx = b.length - 1 - offset;
       return idx >= 0 ? b[idx] : undefined;
     },
+    get_position: (s) => (s === symbol ? currentShares : 0),
+    get_cash: () => undefined,
+    get_market_session: () => getMarketSession(currTimeSec),
+    resolve_order_type: (quantity) => resolveOrderRouting(quantity, currTimeSec, latestValue(samples, 'price')),
   };
 }

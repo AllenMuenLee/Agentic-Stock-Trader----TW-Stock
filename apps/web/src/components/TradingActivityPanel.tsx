@@ -12,6 +12,20 @@ function statusClass(status: string): string {
   return 'text-red-400 bg-red-500/10 border-red-500/30'; // FAILED
 }
 
+/** Formats signal-triggered → order-sent latency as e.g. "1.2s" / "850ms". */
+function formatLatency(latencyMs: number): string {
+  return latencyMs < 1000 ? `${latencyMs}ms` : `${(latencyMs / 1000).toFixed(1)}s`;
+}
+
+const MARKET_TYPE_LABEL: Record<string, string> = { Common: '整股', Odd: '零股', Fixing: '盤後定價' };
+const PRICE_TYPE_LABEL: Record<string, string> = { Limit: '限價', Market: '市價' };
+
+/** Formats resolved Taiwan order routing as e.g. "整股·限價·ROD"; null when not resolved (e.g. REJECTED). */
+function formatRouting(marketType: string | null, priceType: string | null, timeInForce: string | null): string | null {
+  if (!marketType || !priceType || !timeInForce) return null;
+  return [MARKET_TYPE_LABEL[marketType] ?? marketType, PRICE_TYPE_LABEL[priceType] ?? priceType, timeInForce].join('·');
+}
+
 /** Trades executed locally by the trading-app CLI, reported back for visibility only — no Fubon credentials ever pass through this. */
 export default function TradingActivityPanel() {
   const [activity, setActivity] = useState<TradeActivityDto[] | null>(null);
@@ -59,7 +73,15 @@ export default function TradingActivityPanel() {
             </span>
             <span className="font-medium text-slate-300">{a.symbol}</span>
             <span>x{a.quantity}</span>
+            {formatRouting(a.marketType, a.priceType, a.timeInForce) && (
+              <span className="text-slate-500">{formatRouting(a.marketType, a.priceType, a.timeInForce)}</span>
+            )}
             {a.ruleName && <span className="text-slate-600 truncate max-w-[10rem]">{a.ruleName}</span>}
+            {a.latencyMs != null && (
+              <span className="text-slate-500 tabular-nums" title="訊號觸發到送出委託的延遲">
+                延遲 {formatLatency(a.latencyMs)}
+              </span>
+            )}
             {a.source === 'SIMULATION' && (
               <span className="inline-flex items-center gap-1 text-purple-400">
                 <FlaskConical className="w-3 h-3" /> 模擬

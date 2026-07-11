@@ -72,7 +72,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
         config: JSON.parse(r.config) as RuleConfig,
         sessionId: r.sessionId,
         isActive: r.isActive,
-        winRate: r.winRate,
+        returnRate: r.returnRate,
         createdAt: r.createdAt.toISOString(),
         updatedAt: r.updatedAt.toISOString(),
         triggersCount: r.triggers.length,
@@ -82,6 +82,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
           signal: t.signal,
           price: t.price,
           quantity: t.quantity,
+          quantitySpec: t.quantitySpec,
           message: t.message,
           triggeredAt: t.triggeredAt.toISOString(),
         })),
@@ -267,11 +268,14 @@ router.post('/:id/backtest', async (req: Request, res: Response, next: NextFunct
       symbols = JSON.parse(rule.symbols) as string[];
     }
 
-    const { startDate: rawStart, endDate: rawEnd, days: rawDays } = req.body as {
+    const { startDate: rawStart, endDate: rawEnd, days: rawDays, principal: rawPrincipal } = req.body as {
       startDate?: string;
       endDate?: string;
       days?: number;
+      principal?: number;
     };
+    const principal =
+      typeof rawPrincipal === 'number' && Number.isFinite(rawPrincipal) && rawPrincipal > 0 ? rawPrincipal : 1_000_000;
 
     let backtestOptions: number | { startDate: Date; endDate: Date };
 
@@ -293,11 +297,11 @@ router.post('/:id/backtest', async (req: Request, res: Response, next: NextFunct
       backtestOptions = Math.min(Number(rawDays) || 30, 100);
     }
 
-    const result = await yfinance.runBacktest(config, symbols, backtestOptions);
+    const result = await yfinance.runBacktest(config, symbols, backtestOptions, principal);
 
     await prisma.rule.update({
       where: { id: rule.id },
-      data: { winRate: result.winRate },
+      data: { returnRate: result.returnRate },
     });
 
     res.json(result);
@@ -322,6 +326,7 @@ router.get('/:id/triggers', async (req: Request, res: Response, next: NextFuncti
         signal: t.signal,
         price: t.price,
         quantity: t.quantity,
+        quantitySpec: t.quantitySpec,
         message: t.message,
         triggeredAt: t.triggeredAt.toISOString(),
       })),

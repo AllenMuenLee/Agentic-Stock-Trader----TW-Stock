@@ -108,19 +108,103 @@ if (rsi14 !== null && rsi14 < 30) {
 
 ---
 
-## 5. Return Value Protocol
+## 5. Account & Position Functions
+
+### `get_position(stock: string) -> number`
+Shares of `stock` currently held. Live: the user's real Fubon account. Backtest: the backtest's own simulated position. `0` when none held or no account data has been reported yet.
+```javascript
+if (get_position(stock) > 2000) return null; // already hold enough
+```
+
+### `get_cash() -> number | undefined`
+Available cash in the user's real Fubon account. Live-only — always `undefined` in backtest (no cash pool is simulated there), so check `!= null` before using it.
+```javascript
+const cash = get_cash();
+if (cash != null && cash > 50000) { ... }
+```
+
+---
+
+## 6. Taiwan Market Session & Order Routing
+
+These helpers decide **how** a BUY/SELL signal should actually be placed — which market segment (整股/零股/盤後定價), price type, and time-in-force — given Taiwan's trading-session rules. `marketType` is *never* something rule code chooses: it's mechanically derived from `quantity` + the current session, since an incorrect value would produce an invalid order at the exchange. Calling these is optional — if a trade rule only returns `quantity`, the server derives the same routing automatically and applies it before the order reaches the trading-app. Call them yourself when you want to check the market is actually open, or to request a specific `priceType`/`timeInForce`/`limitPrice`.
+
+### `get_market_session() -> MarketSessionInfo`
+```typescript
+{
+  session: 'INTRADAY' | 'AFTER_HOURS_ODD' | 'AFTER_HOURS_FIXED_AND_ODD' | 'CLOSED';
+  intraday: boolean;       // 09:00–13:30 — 盤中整股 (>=1000股) and 盤中零股 (<1000股)
+  afterHoursOdd: boolean;  // 13:40–14:30 — 盤後零股, single 14:30 auction
+  afterHoursFixed: boolean;// 14:00–14:30 — 盤後定價 (whole 張 only, priced at today's close)
+  taipeiTime: string;      // "HH:MM", Taipei local time
+}
+```
+All three booleans `false` means the market is closed (nights, weekends, the 13:30–13:40 gap). **No TWSE holiday calendar is checked** — only weekday + time-of-day.
+
+```javascript
+const session = get_market_session();
+if (!session.intraday && !session.afterHoursOdd && !session.afterHoursFixed) return null; // market closed, skip
+```
+
+### `resolve_order_type(quantity: number) -> OrderRouting`
+```typescript
+{
+  allowed: boolean;
+  reason: string | null;              // why not allowed, when allowed is false
+  marketType: 'Common' | 'Odd' | 'Fixing' | null;  // 整股 / 零股 / 盤後定價
+  priceType: 'Limit' | 'Market' | null;
+  timeInForce: 'ROD' | 'IOC' | 'FOK' | null;
+  quantity: number;                   // requested quantity, clamped down to a valid lot size
+  limitPrice: number | null;          // non-null whenever priceType is 'Limit'
+  note: string | null;                // explains an automatic correction, e.g. odd-lot forcing 限價 ROD
+}
+```
+- Quantity is clamped **down**, never up or split — e.g. requesting 1500 shares during 整股 hours resolves to `quantity: 1000` (the 500 remainder is simply not placed as a second order).
+- 零股 (Odd) and 盤後定價 (Fixing) have non-negotiable price/TIF combinations (零股 = 限價 ROD only; 盤後定價 = 市價 ROD only, executes at today's close) — any conflicting override you pass is ignored and `note` explains why.
+- 整股 (Common) is free to choose: `priceType` (`'Limit'`/`'Market'`) × `timeInForce` (`'ROD'`/`'IOC'`/`'FOK'`), defaulting to Market/ROD.
+- You can pass overrides as a third-ish concept by including `priceType`/`timeInForce`/`limitPrice` directly on your *return object* (see below) — `resolve_order_type` itself only takes `quantity`; the override is applied when the server (or you) folds its own hints in.
+
+```javascript
+const routing = resolve_order_type(1500);
+if (!routing.allowed) return null; // market closed or invalid quantity for this session
+return {
+  signal: 'BUY',
+  quantity: routing.quantity,
+  priceType: routing.priceType,
+  timeInForce: routing.timeInForce,
+  limitPrice: routing.limitPrice,
+  message: `Buying ${routing.quantity} shares (${routing.marketType})`,
+};
+```
+
+---
+
+## 7. Return Value Protocol
 
 Every rule evaluated in the sandbox must return either:
-1. An object indicating a triggered rule: `{ signal: 'BUY' | 'SELL' | 'NOTIFY', message: 'Your reason here' }`
+1. An object indicating a triggered rule: `{ signal: 'BUY' | 'SELL' | 'NOTIFY', message: 'Your reason here', ... }`
 2. `null` or `undefined` (or no return) if the conditions were not met.
+
+**For `actionType: "trade"` rules whose `signal` is `'BUY'` or `'SELL'`, `quantity` is required** — shares (positive number), or the string `'ALL'` (entire position for SELL / all available cash for BUY — resolved downstream by the trading-app, never by the server). Defaults to 1000 (1 張) if omitted on legacy/declarative rules only; AI-generated trade rules must always include it explicitly.
+
+**Optional order-routing fields** — `priceType`, `timeInForce`, `limitPrice` (see §6). Omit them and the server derives sensible session-appropriate defaults automatically. Never include `marketType` yourself.
 
 ```javascript
 const closes = get_data(stock, 'close', curr_time - 300, curr_time);
 if (closes.length < 5) return null;
 
-// Return the signal if condition is met
+// Notify-only signal — no quantity needed
 return {
   signal: 'NOTIFY',
   message: `Condition triggered at ${curr_time} for ${stock}`
+};
+```
+
+```javascript
+// Trade signal — quantity required; priceType/timeInForce/limitPrice optional
+return {
+  signal: 'BUY',
+  quantity: 1000,
+  message: `Buying 1 lot of ${stock}`,
 };
 ```

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import type { TaiwanMarketType, TaiwanPriceType, TaiwanTimeInForce } from './market-session';
 
 /**
  * A BUY/SELL signal waiting on the user's explicit confirmation before any
@@ -11,9 +12,23 @@ export interface PendingOrder {
   ruleName: string;
   symbol: string;
   signal: 'BUY' | 'SELL';
-  quantity: number;
+  /** 'ALL' is unresolved — resolved against the live account cache right before sending, in executeOrder(). */
+  quantity: number | 'ALL';
   price: number;
+  /**
+   * Resolved Taiwan order routing from the server. Null on all four fields when
+   * `quantity === 'ALL'` — `executeOrder()` resolves routing itself right before
+   * sending, once the real quantity is known.
+   */
+  marketType: TaiwanMarketType | null;
+  priceType: TaiwanPriceType | null;
+  timeInForce: TaiwanTimeInForce | null;
+  limitPrice: number | null;
+  orderAllowed: boolean;
+  orderNote: string | null;
   message: string;
+  /** When the rule triggered on the server — the latency clock's start point. */
+  triggeredAt: string;
   createdAt: string;
 }
 

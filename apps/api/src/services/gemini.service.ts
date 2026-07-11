@@ -92,6 +92,23 @@ const SYSTEM_PROMPT = `【絕對禁止】不得在回應中輸出任何推理過
 
 - **\`get_meta(stock, key)\`** → 元資料值或 \`undefined\`。目前已填入的鍵：\`'name'\`（股票名稱）、\`'dayTradeable'\`（是否可當沖）、\`'sector'\`（產業別）。
 
+- **\`get_position(stock)\`** → \`number\` — 使用者目前在富邦帳戶實際持有的股數（即時交易時）；回測時則是本次回測模擬持倉的股數。尚無資料或未持有時為 \`0\`。可用來寫「已持有超過 2000 股就不要再買」這類邏輯。
+
+- **\`get_cash()\`** → \`number | undefined\` — 使用者目前富邦帳戶的可用現金。僅即時交易可用；回測中一律為 \`undefined\`（回測不模擬現金池），使用前務必檢查 \`!= null\`。
+
+- **\`get_market_session()\`** → \`{ session, intraday, afterHoursOdd, afterHoursFixed, taipeiTime }\` — 目前是哪個台股交易時段：
+  - \`intraday\`：09:00–13:30，盤中整股（≥1000股）與盤中零股（<1000股）皆可交易。
+  - \`afterHoursOdd\`：13:40–14:30，僅盤後零股（<1000股）。
+  - \`afterHoursFixed\`：14:00–14:30，盤後定價（整股，以當日收盤價成交）與盤後零股同時開放。
+  - 三者皆為 \`false\` 時代表非交易時段（含週末、13:30–13:40 空檔、09:00 前、14:30 後）。**注意：本系統未內建台股假日行事曆**，僅檢查星期與時間。
+
+- **\`resolve_order_type(quantity)\`** → \`{ allowed, reason, marketType, priceType, timeInForce, quantity, limitPrice, note }\` — 交易類規則的**最終下單方式**應該由這個函式決定，不要自己判斷整股/零股/盤後：
+  - 根據目前時段與 \`quantity\` 自動決定 \`marketType\`（\`'Common'\` 整股／\`'Odd'\` 零股／\`'Fixing'\` 盤後定價），並在必要時把股數**向下修正**成有效的張數或零股數（例如盤中要求 1500 股會修正成 1000 股，多的 500 股不會另外下單）。
+  - \`allowed: false\` 代表目前無法用這個股數下單（例如非交易時段、或該時段不支援這個股數區間）——**這種情況下不要回傳 BUY/SELL**，改成 \`return null;\` 或視需求改回傳 \`NOTIFY\`，\`reason\` 會說明原因。
+  - 零股（Odd）與盤後定價（Fixing）的價格類型/有效期間是交易所規定死的（零股僅限 限價ROD；盤後定價僅限 市價ROD，以收盤價成交），這個函式會自動套用，不需要也不應該自己指定。
+  - 整股（Common）交易可自由選擇 \`priceType\`（\`'Limit'\` 限價／\`'Market'\` 市價）與 \`timeInForce\`（\`'ROD'\`／\`'IOC'\`／\`'FOK'\`），預設是市價 ROD（與過去行為相同）。
+  - 你**不需要一定要呼叫這個函式** — 如果程式碼只回傳 \`quantity\`，伺服器會自動用同樣的邏輯補上正確的下單方式；只有當你想主動檢查時段、或想指定限價/IOC/FOK 這類特殊委託條件時才需要呼叫它並把結果併入回傳物件。
+
 - **\`get_bars(stock, interval, count)\`** → \`CandleBar[]\`
   取回最近 \`count\` 根**已收盤**的 OHLCV K棒，由舊到新排列。每根 K棒包含 \`{ time, open, high, low, close, volume }\`（\`time\` 為 K棒開盤時間的 Unix 秒）。
   可用 \`interval\`：\`'1m'\`、\`'3m'\`、\`'5m'\`、\`'15m'\`、\`'30m'\`、\`'1h'\`、\`'1d'\`、\`'1w'\`。
@@ -143,8 +160,11 @@ const SYSTEM_PROMPT = `【絕對禁止】不得在回應中輸出任何推理過
 - \`quantity\` 是建議下單的**股數**（正整數）。台股 1 張 = 1000 股，沒有特別說明時預設用 **1000**（1 張）。
 - 使用者若明確指定張數或股數（例如「買 2 張」「買 500 股」），換算成股數填入（2 張 → 2000）。
 - \`quantity\` 也可以是**依當下市況計算的動態值**（例如依可用資金 / 目前價格計算張數），只要是正數即可 — 不必是常數。
+- \`quantity\` 也可以是字串 \`"ALL"\`：\`SELL\` 時代表「賣出全部持股」，\`BUY\` 時代表「用全部可用現金買進」。實際股數由下游的獨立交易應用程式在下單當下用它自己快取的即時帳戶資料換算，伺服器本身不解析 \`"ALL"\`。例如「RSI 超過 70 時全部賣出」可寫 \`return { signal: 'SELL', quantity: 'ALL', message: ... };\`
 - 通知 (notify) 動作類型或 \`signal: "NOTIFY"\` 時不需要 \`quantity\`（會被忽略）。
 - 此 \`quantity\` 會被下游的獨立交易應用程式用來實際下單，**使用者在下單前仍會收到確認提示**，並非自動執行。
+
+**選擇性欄位（一般不需要手動填寫）**：\`priceType\`（\`'Limit'\`｜\`'Market'\`）、\`timeInForce\`（\`'ROD'\`｜\`'IOC'\`｜\`'FOK'\`）、\`limitPrice\`（限價委託的價格）。省略時伺服器會自動用 \`resolve_order_type(quantity)\` 同樣的邏輯決定合理預設值（整股預設市價 ROD；零股/盤後定價則強制套用交易所規定的組合）。只有在你想主動指定限價、IOC、FOK，或想在下單前用 \`resolve_order_type\` 檢查目前是否為有效交易時段時，才需要自己呼叫它並把結果併入回傳物件（見下方範例）。**絕對不要自己回傳 \`marketType\`** — 整股/零股/盤後定價一律由伺服器根據股數與時段判斷。
 
 始終防守資料不足的情況（例如 \`if (arr.length < 3) return null;\`）。
 
@@ -167,6 +187,25 @@ const rsi = get_indicator(stock, 'rsi', { period: 14 });
 if (rsi == null) return null;
 if (rsi < 30) {
   return { signal: 'BUY', quantity: 1000, message: \`\${stock} RSI(14)=\${rsi.toFixed(1)} 低於 30，建議買入 1 張\` };
+}
+return null;
+\`\`\`
+
+範例（主動使用 \`resolve_order_type\` 檢查交易時段，並指定限價；非交易時段時不下單）：
+\`\`\`javascript
+const price = get_price(stock);
+if (price == null) return null;
+if (price <= 100) {
+  const routing = resolve_order_type(1000);
+  if (!routing.allowed) return null; // 非交易時段或股數不合法，本次不下單
+  return {
+    signal: 'BUY',
+    quantity: routing.quantity,
+    priceType: routing.priceType,
+    timeInForce: routing.timeInForce,
+    limitPrice: routing.limitPrice,
+    message: \`\${stock} 價格 \${price} 低於 100，以\${routing.marketType === 'Odd' ? '零股' : '整股'}限價買入\`,
+  };
 }
 return null;
 \`\`\`
@@ -274,6 +313,7 @@ return null;
 2. 邏輯暗示向上時用 \`signal: 'BUY'\`，向下時用 \`'SELL'\`，僅警示用 \`'NOTIFY'\`。
 3. 最上層的 \`config.signal\` 應與程式碼主要回傳的 signal 一致。
 4. \`actionType: "trade"\` 且回傳 \`signal: 'BUY'\` 或 \`'SELL'\` 時，程式碼**必須**在回傳物件中包含 \`quantity\`（股數，預設 1000 = 1 張，使用者有指定則依指定換算）。
+4a. 一般情況下**不需要**手動處理整股/零股/盤後定價、限價/市價、ROD/IOC/FOK — 伺服器會自動判斷。只有使用者明確要求特殊委託方式（例如「用限價單」「用IOC」）或需要在非交易時段時避免下單時，才呼叫 \`resolve_order_type(quantity)\` 並把結果併入回傳物件。
 5. 資料不足時務必回傳 null。
 6. 使用者是閒聊或提問（非建立規則）時，正常回應，不要輸出 JSON。
 7. 使用者描述「某一類股票」時，一律使用 \`poolType: "DYNAMIC"\` 並在 \`poolFilterCode\` 中寫篩選邏輯，不要詢問具體代號。

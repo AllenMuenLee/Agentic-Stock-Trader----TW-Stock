@@ -48,10 +48,10 @@ export const api = {
     fetchJson(`/rules/${id}/toggle`, { method: 'PATCH' }),
   deleteRule: (id: string) =>
     fetchJson(`/rules/${id}`, { method: 'DELETE' }),
-  backtestRule: (id: string, options: { startDate?: string; endDate?: string } | number = 30) =>
+  backtestRule: (id: string, options: { startDate?: string; endDate?: string } | number = 30, principal?: number) =>
     fetchJson(`/rules/${id}/backtest`, {
       method: 'POST',
-      body: JSON.stringify(typeof options === 'number' ? { days: options } : options),
+      body: JSON.stringify({ ...(typeof options === 'number' ? { days: options } : options), principal }),
     }),
   getRuleAvailableDates: (id: string) =>
     fetchJson<{ minDate: string | null; maxDate: string | null }>(`/rules/${id}/available-dates`),

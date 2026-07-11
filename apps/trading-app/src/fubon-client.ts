@@ -1,10 +1,11 @@
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
 import path from 'path';
 import readline from 'readline';
+import type { TaiwanMarketType, TaiwanPriceType, TaiwanTimeInForce } from './market-session';
 
 interface BridgeRequest {
   id: number;
-  action: 'login' | 'placeOrder' | 'logout';
+  action: 'login' | 'placeOrder' | 'getAccount' | 'logout';
   params?: Record<string, unknown>;
 }
 
@@ -28,11 +29,21 @@ export interface FubonOrderParams {
   symbol: string;
   side: 'Buy' | 'Sell';
   quantity: number;
+  marketType: TaiwanMarketType;
+  priceType: TaiwanPriceType;
+  timeInForce: TaiwanTimeInForce;
+  /** Required (non-null) whenever priceType is 'Limit'. */
+  limitPrice: number | null;
 }
 
 export interface OrderResult {
   orderId: string | null;
   raw?: unknown;
+}
+
+export interface AccountInfo {
+  cash: number;
+  positions: { symbol: string; quantity: number }[];
 }
 
 /**
@@ -93,6 +104,12 @@ export class FubonClient {
     // (see python/fubon_bridge.py), so we don't assume a structured order id here.
     const data = await this.call('placeOrder', { ...params });
     return { orderId: null, raw: data };
+  }
+
+  /** Cash + positions from the live Fubon account. See python/fubon_bridge.py for the same "unverified field names" caveat as placeOrder. */
+  async getAccountInfo(): Promise<AccountInfo> {
+    const data = await this.call('getAccount');
+    return data as AccountInfo;
   }
 
   async logout(): Promise<void> {

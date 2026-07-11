@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import axios from 'axios';
+import type { TaiwanMarketType, TaiwanPriceType, TaiwanTimeInForce } from './market-session';
 
 export interface LocalActivityEntry {
   symbol: string;
@@ -12,6 +13,13 @@ export interface LocalActivityEntry {
   message: string;
   source: 'LIVE' | 'SIMULATION';
   ruleName?: string;
+  /** Ms from signal-triggered to order-sent (includes user confirmation time). Null for REJECTED — no order was ever sent. */
+  latencyMs: number | null;
+  /** Resolved Taiwan order routing actually used. Absent for REJECTED (no order was ever routed/sent). */
+  marketType?: TaiwanMarketType;
+  priceType?: TaiwanPriceType;
+  timeInForce?: TaiwanTimeInForce;
+  limitPrice?: number | null;
   createdAt: string;
 }
 
@@ -49,6 +57,11 @@ export async function reportActivity(
     orderId?: string | null;
     message?: string;
     source: 'LIVE' | 'SIMULATION';
+    latencyMs?: number | null;
+    marketType?: TaiwanMarketType;
+    priceType?: TaiwanPriceType;
+    timeInForce?: TaiwanTimeInForce;
+    limitPrice?: number;
   },
 ): Promise<void> {
   try {

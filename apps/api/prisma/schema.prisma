@@ -22,6 +22,7 @@ model User {
   updatedAt         DateTime  @updatedAt
   rules             Rule[]
   tradeActivities   TradeActivity[]
+  accountSnapshot   AccountSnapshot?
 
   // ─── Subscription plan & daily usage quotas ──────────────────────────────
   plan              String    @default("FREE")   // "FREE" | "PLAN_399" | "PLAN_799"
@@ -40,7 +41,7 @@ model Rule {
   poolFilterCode String?   // JS body returning boolean; used when poolType = "DYNAMIC"
   sessionId      String?   // chat session that created this rule
   isActive       Boolean   @default(true)
-  winRate        Float?
+  returnRate     Float?    // realized return % from the most recent backtest run
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   userId         String
@@ -49,15 +50,25 @@ model Rule {
 }
 
 model Trigger {
-  id          String   @id @default(cuid())
-  ruleId      String
-  rule        Rule     @relation(fields: [ruleId], references: [id], onDelete: Cascade)
-  symbol      String
-  signal      String
-  price       Float
-  quantity    Int?     // suggested order size in shares, for BUY/SELL from actionType "trade" rules
-  message     String
-  triggeredAt DateTime @default(now())
+  id            String   @id @default(cuid())
+  ruleId        String
+  rule          Rule     @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  symbol        String
+  signal        String
+  price         Float
+  quantity      Int?     // suggested order size in shares, for BUY/SELL from actionType "trade" rules
+  quantitySpec  String?  // "ALL" when the rule returned the all-position/all-cash sentinel instead of a number
+  // Resolved Taiwan order routing (resolveOrderRouting() in @stock-notifier/shared) — null when
+  // quantity is unresolved ("ALL"; the trading-app resolves routing itself in that case) or when
+  // signal is NOTIFY.
+  marketType    String?  // "Common" | "Odd" | "Fixing"
+  priceType     String?  // "Limit" | "Market"
+  timeInForce   String?  // "ROD" | "IOC" | "FOK"
+  limitPrice    Float?
+  orderAllowed  Boolean? // false when a concrete-quantity signal was rejected (e.g. outside trading hours)
+  orderNote     String?  // reason (when rejected) or auto-correction note (e.g. odd-lot forcing 限價ROD)
+  message       String
+  triggeredAt   DateTime @default(now())
 }
 
 // OHLCV bars at any interval. Stores daily ('1d') and intraday ('1m','5m','15m','30m','1h')
@@ -103,9 +114,26 @@ model TradeActivity {
   orderId   String?
   message   String?
   source    String   @default("LIVE") // "LIVE" | "SIMULATION"
+  latencyMs Int?     // ms from signal-triggered to order-sent (includes user confirmation time); null for REJECTED
+  // Resolved Taiwan order routing actually used for this order; null for REJECTED (never routed/sent).
+  marketType  String?  // "Common" | "Odd" | "Fixing"
+  priceType   String?  // "Limit" | "Market"
+  timeInForce String?  // "ROD" | "IOC" | "FOK"
+  limitPrice  Float?
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
+}
+
+// Latest known Fubon account state (cash + positions), pushed periodically by the
+// trading-app from its own live session (never Fubon credentials). Rule code reads
+// this via get_position()/get_cash() so evaluation never waits on a live API call.
+model AccountSnapshot {
+  userId    String   @id
+  user      User     @relation(fields: [userId], references: [id])
+  cash      Float
+  positions String   // JSON-serialized AccountPosition[]
+  updatedAt DateTime @updatedAt
 }
 
 model ChatMessage {

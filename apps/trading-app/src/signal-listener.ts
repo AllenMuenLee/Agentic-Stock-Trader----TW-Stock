@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import type { TaiwanMarketType, TaiwanPriceType, TaiwanTimeInForce } from './market-session';
 
 export interface SignalEvent {
   ruleId: string;
@@ -7,8 +8,19 @@ export interface SignalEvent {
   symbol: string;
   signal: 'BUY' | 'SELL' | 'NOTIFY';
   price: number;
-  /** Suggested order size in shares, decided by the rule's own AI-generated code. Null for NOTIFY. */
-  quantity: number | null;
+  /** Suggested order size in shares, decided by the rule's own AI-generated code. Null for NOTIFY. 'ALL' is unresolved — see pending-orders.ts. */
+  quantity: number | 'ALL' | null;
+  /**
+   * Resolved Taiwan order routing from the server. Null on all four fields when
+   * `quantity === 'ALL'` — this app resolves routing itself in `executeOrder()`
+   * once the real quantity is known (see `resolveQuantity`/`resolveRouting` in server.ts).
+   */
+  marketType: TaiwanMarketType | null;
+  priceType: TaiwanPriceType | null;
+  timeInForce: TaiwanTimeInForce | null;
+  limitPrice: number | null;
+  orderAllowed: boolean;
+  orderNote: string | null;
   message: string;
   triggeredAt: string;
 }

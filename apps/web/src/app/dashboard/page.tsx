@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import {
-  Play, Pause, Trash2, BarChart2, Clock, TrendingUp, TrendingDown,
+  Play, Pause, Trash2, BarChart2, Clock,
   RefreshCw, ChevronDown, ChevronUp, Zap, AlertCircle, MessageSquare,
   Bell, ArrowLeftRight, Pencil, Check, X, Database, Filter,
 } from 'lucide-react';
@@ -34,6 +34,15 @@ function formatSignalDate(isoStr: string): string {
     });
   }
   return d.toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
+const MARKET_TYPE_LABEL: Record<string, string> = { Common: '整股', Odd: '零股', Fixing: '盤後定價' };
+const PRICE_TYPE_LABEL: Record<string, string> = { Limit: '限價', Market: '市價' };
+
+/** Formats resolved Taiwan order routing as e.g. "整股·限價·ROD"; null when the signal didn't actually execute. */
+function formatRouting(marketType: string | null, priceType: string | null, timeInForce: string | null): string | null {
+  if (!marketType || !priceType || !timeInForce) return null;
+  return [MARKET_TYPE_LABEL[marketType] ?? marketType, PRICE_TYPE_LABEL[priceType] ?? priceType, timeInForce].join('·');
 }
 
 function signalBadgeClass(signal: string): string {
@@ -72,6 +81,8 @@ export default function DashboardPage() {
   const [backtestDates, setBacktestDates] = useState<Record<string, DateRange>>({});
   const [availableDates, setAvailableDates] = useState<Record<string, AvailableDates>>({});
   const [backtestDateRange, setBacktestDateRange] = useState<Record<string, DateRange>>({});
+  // 本金 (starting capital, NT$) used for the backtest's simulated cash — defaults to 1,000,000 per rule.
+  const [backtestPrincipal, setBacktestPrincipal] = useState<Record<string, number>>({});
 
   // Code editor + pool type editor state (per rule id)
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -177,7 +188,8 @@ export default function DashboardPage() {
     setBacktestLoading(id);
     try {
       const dates = backtestDates[id];
-      const result = await api.backtestRule(id, dates ?? 30) as BacktestResult;
+      const principal = backtestPrincipal[id] ?? 1_000_000;
+      const result = await api.backtestRule(id, dates ?? 30, principal) as BacktestResult;
       setBacktestResults((prev) => ({ ...prev, [id]: result }));
       if (dates) setBacktestDateRange((prev) => ({ ...prev, [id]: dates }));
       await loadRules();
@@ -271,9 +283,9 @@ export default function DashboardPage() {
                 <div className="flex gap-4 text-center flex-shrink-0">
                   {isTrade ? (
                     <div>
-                      <p className="text-xs text-amber-600/80">回測勝率</p>
-                      <p className={`text-lg font-bold ${rule.winRate !== null ? (rule.winRate >= 50 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-500'}`}>
-                        {rule.winRate !== null ? `${rule.winRate.toFixed(1)}%` : '—'}
+                      <p className="text-xs text-amber-600/80">回測報酬率</p>
+                      <p className={`text-lg font-bold ${rule.returnRate !== null ? (rule.returnRate >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-slate-500'}`}>
+                        {rule.returnRate !== null ? `${rule.returnRate >= 0 ? '+' : ''}${rule.returnRate.toFixed(2)}%` : '—'}
                       </p>
                     </div>
                   ) : (
@@ -346,6 +358,17 @@ export default function DashboardPage() {
                       }))
                     }
                     className="bg-slate-800 border border-slate-700 rounded text-xs text-slate-300 px-1.5 py-0.5 w-[118px] disabled:opacity-40 disabled:cursor-not-allowed"
+                  />
+                  <span className="text-slate-600 text-xs" title="回測本金 — 模擬起始現金，買進不會超過可用現金、賣出不會超過持股">本金</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={10000}
+                    value={backtestPrincipal[rule.id] ?? 1_000_000}
+                    onChange={(e) =>
+                      setBacktestPrincipal((prev) => ({ ...prev, [rule.id]: Number(e.target.value) }))
+                    }
+                    className="bg-slate-800 border border-slate-700 rounded text-xs text-slate-300 px-1.5 py-0.5 w-[90px]"
                   />
                 </div>
 
@@ -524,24 +547,31 @@ export default function DashboardPage() {
                       )}
                     </h4>
 
-                    {/* Trade: win/loss grid; Notify: signal count only */}
+                    {/* Trade: realized/unrealized return; Notify: signal count only */}
                     {isTrade ? (
-                      <div className="grid grid-cols-4 gap-3 mb-3">
-                        {[
-                          { label: '總信號數', value: backtest.totalSignals, cls: 'text-slate-300' },
-                          { label: '獲利', value: backtest.winCount, cls: 'text-emerald-400' },
-                          { label: '虧損', value: backtest.lossCount, cls: 'text-red-400' },
-                          {
-                            label: '勝率',
-                            value: `${backtest.winRate.toFixed(1)}%`,
-                            cls: backtest.winRate >= 50 ? 'text-emerald-400' : 'text-red-400',
-                          },
-                        ].map((stat) => (
-                          <div key={stat.label} className="bg-slate-900 rounded-lg p-3 text-center">
-                            <p className="text-xs text-slate-500">{stat.label}</p>
-                            <p className={`text-xl font-bold ${stat.cls}`}>{stat.value}</p>
-                          </div>
-                        ))}
+                      <div className="grid grid-cols-3 gap-3 mb-3">
+                        <div className="bg-slate-900 rounded-lg p-3 text-center">
+                          <p className="text-xs text-slate-500">總信號數</p>
+                          <p className="text-xl font-bold text-slate-300">{backtest.totalSignals}</p>
+                        </div>
+                        <div className="bg-slate-900 rounded-lg p-3 text-center">
+                          <p className="text-xs text-slate-500">已實現報酬率</p>
+                          <p className={`text-xl font-bold ${backtest.returnRate >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {backtest.returnRate >= 0 ? '+' : ''}{backtest.returnRate.toFixed(2)}%
+                          </p>
+                        </div>
+                        <div className="bg-slate-900 rounded-lg p-3 text-center">
+                          <p className="text-xs text-slate-500">未實現報酬率</p>
+                          <p className={`text-xl font-bold ${
+                            backtest.unrealizedReturnRate === null
+                              ? 'text-slate-500'
+                              : backtest.unrealizedReturnRate >= 0 ? 'text-emerald-400' : 'text-red-400'
+                          }`}>
+                            {backtest.unrealizedReturnRate !== null
+                              ? `${backtest.unrealizedReturnRate >= 0 ? '+' : ''}${backtest.unrealizedReturnRate.toFixed(2)}%`
+                              : '—'}
+                          </p>
+                        </div>
                       </div>
                     ) : (
                       <div className="flex gap-3 mb-3">
@@ -558,7 +588,7 @@ export default function DashboardPage() {
                       </div>
                     )}
 
-                    {/* Signal list — trade shows P/L, notify shows date + price only */}
+                    {/* Signal list — trade shows order size, notify shows date + price only */}
                     {backtest.signals.length > 0 && (() => {
                       const isShowAll = showAllSignals[rule.id] ?? false;
                       const allReversed = [...backtest.signals].reverse();
@@ -576,15 +606,11 @@ export default function DashboardPage() {
                                   {s.signal}
                                 </span>
                                 <span>${s.price.toFixed(2)}</span>
-                                {isTrade && s.profitPercent !== undefined && (
-                                  <span className={`ml-auto flex items-center gap-0.5 ${s.profitPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                    {s.profitPercent >= 0 ? (
-                                      <TrendingUp className="w-3 h-3" />
-                                    ) : (
-                                      <TrendingDown className="w-3 h-3" />
-                                    )}
-                                    {s.profitPercent.toFixed(2)}%
-                                  </span>
+                                {isTrade && s.quantity !== null && (
+                                  <span className="ml-auto text-slate-500">x{s.quantity}</span>
+                                )}
+                                {isTrade && formatRouting(s.marketType, s.priceType, s.timeInForce) && (
+                                  <span className="text-slate-600">{formatRouting(s.marketType, s.priceType, s.timeInForce)}</span>
                                 )}
                               </div>
                             ))}

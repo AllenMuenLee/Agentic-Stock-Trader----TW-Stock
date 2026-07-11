@@ -28,6 +28,7 @@ import { initSubscriptionManager, refreshSubscriptions, getTrackedSubscriptions 
 import { redis, yfinance } from './singletons';
 import type { RuleConfig, TickData } from './types/rule';
 import type { SignalPayloadDto } from '@stock-notifier/shared';
+import { resolveOrderRouting } from '@stock-notifier/shared';
 
 // Fallback order size (shares) for BUY/SELL signals whose rule code doesn't
 // specify a quantity (legacy declarative rules, or code written before this
@@ -59,6 +60,7 @@ const ORIGIN_GUARD_EXEMPT = new Set([
   'GET /api/bind/discord/callback',
   'GET /api/health',
   'POST /api/trading-app/activity',
+  'POST /api/trading-app/account',
 ]);
 app.use((req, res, next) => {
   if (ORIGIN_GUARD_EXEMPT.has(`${req.method} ${req.path}`)) return next();
@@ -182,9 +184,28 @@ fugle.onTick(async (tick: TickData) => {
     const matchingRules = [...fixedMatching, ...dynamicMatching];
     if (matchingRules.length === 0) return;
 
+    // Preload account snapshots for every distinct rule owner in one query —
+    // dataContext above is shared across all of matchingRules regardless of
+    // owning user, so get_position/get_cash are bound per-rule below instead
+    // of baked into that shared context.
+    const ownerIds = [...new Set(matchingRules.map((r) => r.userId))];
+    const snapshots = await prisma.accountSnapshot.findMany({ where: { userId: { in: ownerIds } } });
+    const accountByUser = new Map(
+      snapshots.map((s) => [
+        s.userId,
+        { cash: s.cash, positions: JSON.parse(s.positions) as { symbol: string; quantity: number }[] },
+      ]),
+    );
+
     for (const rule of matchingRules) {
       const config = JSON.parse(rule.config) as RuleConfig;
-      const result = ruleEngine.evaluate(config, tick, history, dataContext);
+      const account = accountByUser.get(rule.userId);
+      const ruleContext = {
+        ...dataContext,
+        get_position: (s: string) => account?.positions.find((p) => p.symbol === s)?.quantity ?? 0,
+        get_cash: () => account?.cash,
+      };
+      const result = ruleEngine.evaluate(config, tick, history, ruleContext);
 
       // Log any bug in the user's rule code (syntax/runtime error, timeout, invalid return)
       if (result.error) {
@@ -199,10 +220,30 @@ fugle.onTick(async (tick: TickData) => {
 
       // Suggested order size for BUY/SELL — the AI-generated rule code decides this;
       // DEFAULT_TRADE_QUANTITY only covers legacy/declarative rules or code that omits it.
-      const quantity =
+      // 'ALL' is an unresolved sentinel ("entire position" / "all cash") — the API
+      // server never resolves it, only the trading-app does, against its own live
+      // account cache right before sending the order.
+      const quantity: number | 'ALL' | null =
         result.signal === 'BUY' || result.signal === 'SELL'
           ? result.quantity ?? DEFAULT_TRADE_QUANTITY
           : null;
+
+      // Resolve Taiwan order routing for a concrete quantity right now. 'ALL'
+      // stays unresolved (null routing) — the trading-app resolves it itself
+      // against real account numbers right before sending the order.
+      const routing =
+        typeof quantity === 'number'
+          ? resolveOrderRouting(quantity, currTimeSec, tick.price, {
+              priceType: result.priceType,
+              timeInForce: result.timeInForce,
+              limitPrice: result.limitPrice,
+            })
+          : null;
+      // When routing clamps the quantity down (e.g. 1500 → 1000 during 整股 hours),
+      // persist/broadcast the actually-actionable quantity, not the raw request.
+      const finalQuantity: number | 'ALL' | null = routing?.allowed ? routing.quantity : quantity;
+      const orderAllowed = routing ? routing.allowed : true;
+      const orderNote = routing ? (routing.allowed ? routing.note : routing.reason) : null;
 
       // Save trigger
       const trigger = await prisma.trigger.create({
@@ -211,7 +252,14 @@ fugle.onTick(async (tick: TickData) => {
           symbol: tick.symbol,
           signal: result.signal!,
           price: tick.price,
-          quantity,
+          quantity: typeof finalQuantity === 'number' ? finalQuantity : null,
+          quantitySpec: finalQuantity === 'ALL' ? 'ALL' : null,
+          marketType: routing?.marketType ?? null,
+          priceType: routing?.priceType ?? null,
+          timeInForce: routing?.timeInForce ?? null,
+          limitPrice: routing?.limitPrice ?? null,
+          orderAllowed: routing ? routing.allowed : null,
+          orderNote,
           message: result.message!,
         },
       });
@@ -223,7 +271,13 @@ fugle.onTick(async (tick: TickData) => {
         symbol: tick.symbol,
         signal: result.signal!,
         price: tick.price,
-        quantity,
+        quantity: finalQuantity,
+        marketType: routing?.marketType ?? null,
+        priceType: routing?.priceType ?? null,
+        timeInForce: routing?.timeInForce ?? null,
+        limitPrice: routing?.limitPrice ?? null,
+        orderAllowed,
+        orderNote,
         message: result.message!,
         triggeredAt: trigger.triggeredAt.toISOString(),
       };

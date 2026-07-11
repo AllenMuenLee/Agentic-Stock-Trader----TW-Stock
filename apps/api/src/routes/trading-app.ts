@@ -4,7 +4,7 @@ import path from 'path';
 import archiver from 'archiver';
 import { requireAuth } from '../middleware/auth';
 import { getPlan } from '../config/plans';
-import type { ReportTradeActivityDto, TradeActivityDto } from '@stock-notifier/shared';
+import type { ReportTradeActivityDto, TradeActivityDto, ReportAccountSnapshotDto } from '@stock-notifier/shared';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -35,10 +35,39 @@ router.post('/activity', async (req: Request, res: Response, next: NextFunction)
         orderId: dto.orderId ?? null,
         message: dto.message ?? null,
         source: dto.source,
+        latencyMs: dto.latencyMs ?? null,
+        marketType: dto.marketType ?? null,
+        priceType: dto.priceType ?? null,
+        timeInForce: dto.timeInForce ?? null,
+        limitPrice: dto.limitPrice ?? null,
       },
     });
 
     res.status(201).json({ id: activity.id });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/trading-app/account — pushed periodically by the local trading-app from
+// its own live Fubon session. Never contains credentials, only cash/positions.
+// Exempted from originGuard for the same reason as /activity — JWT bearer auth is
+// the real gate, not Origin.
+router.post('/account', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const dto = req.body as ReportAccountSnapshotDto;
+    if (typeof dto.cash !== 'number' || !Array.isArray(dto.positions)) {
+      res.status(400).json({ error: 'cash (number) and positions (array) are required' });
+      return;
+    }
+
+    await prisma.accountSnapshot.upsert({
+      where: { userId: req.user!.id },
+      create: { userId: req.user!.id, cash: dto.cash, positions: JSON.stringify(dto.positions) },
+      update: { cash: dto.cash, positions: JSON.stringify(dto.positions) },
+    });
+
+    res.status(204).end();
   } catch (err) {
     next(err);
   }
@@ -65,6 +94,11 @@ router.get('/activity', async (req: Request, res: Response, next: NextFunction) 
       orderId: a.orderId,
       message: a.message,
       source: a.source,
+      latencyMs: a.latencyMs,
+      marketType: a.marketType,
+      priceType: a.priceType,
+      timeInForce: a.timeInForce,
+      limitPrice: a.limitPrice,
       createdAt: a.createdAt.toISOString(),
     }));
 

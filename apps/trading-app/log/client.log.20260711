@@ -1,0 +1,8 @@
+[2026-07-11 11:17:10.589822400 +08:00 INFO] [login] personal_id="41610792"
+[2026-07-11 11:17:10.639554700 +08:00 INFO] this account require 2fa
+[2026-07-11 11:17:10.720212 +08:00 INFO] [future_option_mapping]: 49.8521ms
+[2026-07-11 11:17:10.747932800 +08:00 INFO] [future_option_mapping]: 24.3934ms
+[2026-07-11 11:17:10.830604800 +08:00 INFO] [future_option_mapping]: 81.7117ms
+[2026-07-11 11:17:10.885066700 +08:00 INFO] [future_option_mapping]: 46.9024ms
+[2026-07-11 11:17:11.488002200 +08:00 INFO] [get inventories] account=Account { branch_no: "20203", account: "7900280", account_type: "stock", name: "測試2***" }
+[2026-07-11 11:17:12.078098500 +08:00 INFO] [inventory_result]: 589.1803ms
