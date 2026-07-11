@@ -13,14 +13,15 @@ interface AuthContextValue {
   user: User | null;
   token: string | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
-  register: (username: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
+  /** Registers the account (unverified) and sends a verification email — does NOT log the user in or return a token, since login is blocked until they verify. */
+  register: (email: string, password: string) => Promise<void>;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const PUBLIC_PATHS = ['/', '/login', '/register', '/docs'];
+const PUBLIC_PATHS = ['/', '/login', '/register', '/docs', '/verify-email', '/admin'];
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -69,37 +70,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const login = useCallback(async (username: string, password: string) => {
+  const login = useCallback(async (email: string, password: string) => {
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ email, password }),
     });
     if (!res.ok) {
       let msg = '登入失敗，請確認伺服器是否正在運行';
-      try { msg = (await res.json()).error || msg; } catch { /* non-JSON error */ }
-      throw new Error(msg);
+      let code: string | undefined;
+      try {
+        const body = await res.json();
+        msg = body.error || msg;
+        code = body.code;
+      } catch { /* non-JSON error */ }
+      // Attach `code` (e.g. 'EMAIL_NOT_VERIFIED') so the login page can offer a
+      // resend-verification action — Error itself has no such field natively.
+      throw Object.assign(new Error(msg), { code });
     }
     const { token: tok, user: u } = await res.json();
     saveSession(tok, u);
     router.push('/chat');
   }, [saveSession, router]);
 
-  const register = useCallback(async (username: string, password: string) => {
+  const register = useCallback(async (email: string, password: string) => {
     const res = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ email, password }),
     });
     if (!res.ok) {
       let msg = '註冊失敗，請確認伺服器是否正在運行';
       try { msg = (await res.json()).error || msg; } catch { /* non-JSON error */ }
       throw new Error(msg);
     }
-    const { token: tok, user: u } = await res.json();
-    saveSession(tok, u);
-    router.push('/chat');
-  }, [saveSession, router]);
+    // No token here — the account starts unverified and login is blocked until
+    // the user clicks the emailed verification link. The register page shows
+    // a "check your email" panel instead of redirecting.
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, token, loading, login, register, logout }}>

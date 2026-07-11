@@ -1,7 +1,8 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { NotificationService } from '../services/notification.service';
 import { requireAuth } from '../middleware/auth';
+import { EMAIL_REGEX, issueVerification } from '../services/email-verification';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -23,20 +24,55 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
-// PUT /api/settings — only email is updatable here; LINE/Discord use /api/bind/*
+// PUT /api/settings — only email is updatable here; LINE/Discord use /api/bind/*.
+// Email is also the login identifier now (see auth.ts), so it can no longer be
+// cleared, must be unique, and changing it re-triggers verification — the
+// account keeps its current session but won't be able to log in again under
+// the new address until it's verified.
 router.put('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { email } = req.body as { email?: string };
+    if (email === undefined) {
+      const current = await prisma.user.findUnique({ where: { id: req.user!.id } });
+      res.json({ email: current?.email ?? null, lineUserId: current?.lineUserId ?? null, discordUserId: current?.discordUserId ?? null });
+      return;
+    }
 
-    const user = await prisma.user.update({
-      where: { id: req.user!.id },
-      data: { email: email !== undefined ? email || null : undefined },
-    });
+    const trimmed = email.trim();
+    if (!trimmed || !EMAIL_REGEX.test(trimmed)) {
+      res.status(400).json({ error: '請輸入有效的 Email 地址' });
+      return;
+    }
+
+    const current = await prisma.user.findUnique({ where: { id: req.user!.id } });
+    if (!current) { res.status(404).json({ error: '找不到使用者' }); return; }
+
+    if (trimmed === current.email) {
+      res.json({ email: current.email, lineUserId: current.lineUserId, discordUserId: current.discordUserId });
+      return;
+    }
+
+    let user;
+    try {
+      user = await prisma.user.update({
+        where: { id: req.user!.id },
+        data: { email: trimmed, emailVerified: false },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        res.status(409).json({ error: '此 Email 已被其他帳號使用' });
+        return;
+      }
+      throw err;
+    }
+
+    await issueVerification(prisma, notifier, user.id, user.email);
 
     res.json({
       email: user.email,
       lineUserId: user.lineUserId,
       discordUserId: user.discordUserId,
+      message: '已寄送驗證信至新的 Email，請完成驗證（下次登入需使用已驗證的 Email）。',
     });
   } catch (err) {
     next(err);

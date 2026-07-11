@@ -38,6 +38,10 @@ export const api = {
   // Auth
   updatePassword: (data: { currentPassword: string; newPassword: string }) =>
     fetchJson('/auth/password', { method: 'PATCH', body: JSON.stringify(data) }),
+  verifyEmail: (token: string) =>
+    fetchJson<{ ok: boolean; message: string }>('/auth/verify-email', { method: 'POST', body: JSON.stringify({ token }) }),
+  resendVerification: (email: string) =>
+    fetchJson<{ message: string }>('/auth/resend-verification', { method: 'POST', body: JSON.stringify({ email }) }),
 
   // Chat
   getChatSessions: () => fetchJson<{

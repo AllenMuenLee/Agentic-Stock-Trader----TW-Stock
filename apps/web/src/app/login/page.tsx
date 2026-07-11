@@ -2,27 +2,44 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { TrendingUp, LogIn } from 'lucide-react';
+import { TrendingUp, LogIn, MailCheck } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { api } from '@/lib/api';
 
 export default function LoginPage() {
   const { login } = useAuth();
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent'>('idle');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username || !password) { setError('請填寫所有欄位'); return; }
+    if (!email || !password) { setError('請填寫所有欄位'); return; }
     setError('');
+    setNeedsVerification(false);
+    setResendState('idle');
     setLoading(true);
     try {
-      await login(username, password);
+      await login(email, password);
     } catch (err) {
       setError(err instanceof Error ? err.message : '登入失敗');
+      if (err instanceof Error && (err as Error & { code?: string }).code === 'EMAIL_NOT_VERIFIED') {
+        setNeedsVerification(true);
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const resend = async () => {
+    setResendState('sending');
+    try {
+      await api.resendVerification(email);
+    } finally {
+      setResendState('sent');
     }
   };
 
@@ -40,13 +57,14 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} className="card p-6 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">使用者名稱</label>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">Email</label>
             <input
               className="input"
-              placeholder="輸入使用者名稱"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
+              type="email"
+              placeholder="your@email.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
               disabled={loading}
             />
           </div>
@@ -68,6 +86,26 @@ export default function LoginPage() {
             <p className="text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
               {error}
             </p>
+          )}
+
+          {needsVerification && (
+            <div className="text-sm bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 space-y-2">
+              <p className="text-amber-400">尚未收到驗證信嗎？</p>
+              {resendState === 'sent' ? (
+                <p className="text-emerald-400 flex items-center gap-1.5">
+                  <MailCheck className="w-3.5 h-3.5" /> 已重新寄送，請至信箱查看
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={resend}
+                  disabled={resendState === 'sending'}
+                  className="btn-ghost text-xs"
+                >
+                  {resendState === 'sending' ? '寄送中…' : '重新寄送驗證信'}
+                </button>
+              )}
+            </div>
           )}
 
           <button

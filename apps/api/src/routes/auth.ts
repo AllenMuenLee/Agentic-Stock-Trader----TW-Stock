@@ -1,31 +1,13 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
 import { requireAuth, signToken } from '../middleware/auth';
 import { NotificationService } from '../services/notification.service';
+import { EMAIL_REGEX, issueVerification } from '../services/email-verification';
 
 const router = Router();
 const prisma = new PrismaClient();
 const notifier = new NotificationService();
-
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const VERIFY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h
-
-function buildVerifyUrl(token: string): string {
-  return `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${token}`;
-}
-
-async function issueVerification(userId: string, email: string): Promise<void> {
-  const token = crypto.randomBytes(32).toString('hex');
-  await prisma.user.update({
-    where: { id: userId },
-    data: { emailVerifyToken: token, emailVerifyTokenExpiry: new Date(Date.now() + VERIFY_TOKEN_TTL_MS) },
-  });
-  notifier.sendVerificationEmail(email, buildVerifyUrl(token)).catch((err) =>
-    console.error('[Auth] Failed to send verification email:', err),
-  );
-}
 
 /** Derives a display username from an email's local-part (used in NavBar/settings/LINE-bind messages only — no longer a registration field). Disambiguates on collision. */
 async function deriveUsername(email: string): Promise<string> {
@@ -71,7 +53,7 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
     const user = await prisma.user.create({
       data: { username, email, passwordHash, emailVerified: false },
     });
-    await issueVerification(user.id, email);
+    await issueVerification(prisma, notifier, user.id, email);
 
     res.status(201).json({
       message: '註冊成功！請至您的 Email 信箱點擊驗證連結以啟用帳號。',
@@ -153,7 +135,7 @@ router.post('/resend-verification', async (req: Request, res: Response, next: Ne
 
     const user = await prisma.user.findUnique({ where: { email } });
     if (user && !user.emailVerified) {
-      await issueVerification(user.id, email);
+      await issueVerification(prisma, notifier, user.id, email);
     }
 
     res.json({ message: '若此 Email 已註冊且尚未驗證，驗證信將重新寄出。' });
