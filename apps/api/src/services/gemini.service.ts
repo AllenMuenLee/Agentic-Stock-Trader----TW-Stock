@@ -94,7 +94,7 @@ const SYSTEM_PROMPT = `【絕對禁止】不得在回應中輸出任何推理過
 
 - **\`get_position(stock)\`** → \`number\` — 使用者目前在富邦帳戶實際持有的股數（即時交易時）；回測時則是本次回測模擬持倉的股數。尚無資料或未持有時為 \`0\`。可用來寫「已持有超過 2000 股就不要再買」這類邏輯。
 
-- **\`get_cash()\`** → \`number | undefined\` — 使用者目前富邦帳戶的可用現金。僅即時交易可用；回測中一律為 \`undefined\`（回測不模擬現金池），使用前務必檢查 \`!= null\`。
+- **\`get_cash()\`** → \`number | undefined\` — 可用現金。即時交易時為使用者富邦帳戶的實際可用現金；回測時為本次回測模擬的剩餘本金（隨每筆模擬 BUY/SELL 增減）。尚無資料時為 \`undefined\`，使用前務必檢查 \`!= null\`。
 
 - **\`get_market_session()\`** → \`{ session, intraday, afterHoursOdd, afterHoursFixed, taipeiTime }\` — 目前是哪個台股交易時段：
   - \`intraday\`：09:00–13:30，盤中整股（≥1000股）與盤中零股（<1000股）皆可交易。

@@ -84,9 +84,10 @@ export interface DataContext {
    */
   get_position: (stock: string) => number;
   /**
-   * Available cash in the user's real Fubon account. `undefined` when no
-   * account snapshot has been reported yet, or in backtest (no cash pool is
-   * simulated there — live-only, same as `get_meta`).
+   * Available cash. Live: the user's real Fubon account (`undefined` when no
+   * account snapshot has been reported yet). Backtest: the backtest's own
+   * simulated remaining 本金 (principal), which rises/falls with each simulated
+   * BUY/SELL — mirrors how `get_position` reflects the simulated share count.
    */
   get_cash: () => number | undefined;
   /** Which Taiwan trading session is currently open (整股/零股 intraday, 盤後定價/零股, or closed). */
@@ -405,6 +406,7 @@ export function buildIntradayBarContext(
   intradayBars: Map<string, CandleBar[]>,
   currentTimeSec: number,
   currentShares = 0,
+  currentCash?: number,
 ): DataContext {
   // Daily bars whose date falls on or before the current bar's calendar day
   const cutoffMs = new Date(currentTimeSec * 1000);
@@ -503,11 +505,10 @@ export function buildIntradayBarContext(
       const idx = cutoffIdx - offset;
       return idx >= 0 ? all[idx] : undefined;
     },
-    // No real account in backtest — get_position mirrors the backtest's own
-    // simulated running position (already tracked by the caller); get_cash has
-    // no simulated cash pool to draw from, live-only, same as get_meta.
+    // No real account in backtest — get_position/get_cash mirror the backtest's
+    // own simulated running position/本金 (both tracked by the caller, runBacktest).
     get_position: (s) => (s === symbol ? currentShares : 0),
-    get_cash: () => undefined,
+    get_cash: () => currentCash,
     get_market_session: () => getMarketSession(currentTimeSec),
     resolve_order_type: (quantity) => resolveOrderRouting(quantity, currentTimeSec, latestValue(samples, 'price')),
   };
@@ -528,6 +529,7 @@ export function buildBarContext(
   uptoIndex: number,
   intradayBars?: Map<string, CandleBar[]>,
   currentShares = 0,
+  currentCash?: number,
 ): DataContext {
   const slice = bars.slice(0, uptoIndex + 1);
   const samples = barsToSamples(slice);
@@ -570,7 +572,7 @@ export function buildBarContext(
       return idx >= 0 ? b[idx] : undefined;
     },
     get_position: (s) => (s === symbol ? currentShares : 0),
-    get_cash: () => undefined,
+    get_cash: () => currentCash,
     get_market_session: () => getMarketSession(currTimeSec),
     resolve_order_type: (quantity) => resolveOrderRouting(quantity, currTimeSec, latestValue(samples, 'price')),
   };

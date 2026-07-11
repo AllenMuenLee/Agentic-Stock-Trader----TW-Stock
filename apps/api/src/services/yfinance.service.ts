@@ -510,8 +510,8 @@ export class YFinanceService {
 
         const dataContext =
           primaryInterval === '1d'
-            ? buildBarContext(symbol, dailyBars, i, intradaySQLBars, shares)
-            : buildIntradayBarContext(symbol, dailyBars, intradaySQLBars, currentBar.time, shares);
+            ? buildBarContext(symbol, dailyBars, i, intradaySQLBars, shares, cash)
+            : buildIntradayBarContext(symbol, dailyBars, intradaySQLBars, currentBar.time, shares, cash);
 
         const result = engine.evaluate(config, tick, dailyBars, dataContext);
 

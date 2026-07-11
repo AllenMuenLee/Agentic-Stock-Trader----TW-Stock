@@ -117,7 +117,7 @@ if (get_position(stock) > 2000) return null; // already hold enough
 ```
 
 ### `get_cash() -> number | undefined`
-Available cash in the user's real Fubon account. Live-only — always `undefined` in backtest (no cash pool is simulated there), so check `!= null` before using it.
+Available cash. Live: the user's real Fubon account. Backtest: the backtest's own simulated remaining 本金 (principal), rising/falling with each simulated BUY/SELL — mirrors how `get_position` reflects the simulated share count. `undefined` only when no data is available yet (e.g. no account snapshot reported live), so still check `!= null` before using it.
 ```javascript
 const cash = get_cash();
 if (cash != null && cash > 50000) { ... }
