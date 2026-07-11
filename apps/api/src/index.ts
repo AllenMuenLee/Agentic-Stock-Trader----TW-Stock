@@ -15,17 +15,17 @@ import bindRouter from './routes/bind';
 import webhooksRouter from './routes/webhooks';
 import plansRouter from './routes/plans';
 import tradingAppRouter from './routes/trading-app';
+import adminRouter from './routes/admin';
 import { originGuard } from './middleware/originGuard';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'stock-notifier-secret-key';
 
-import { FugleService } from './services/fugle.service';
 import { NotificationService } from './services/notification.service';
 import { RuleEngine } from './engine/rule-engine';
 import { loadDataContext } from './engine/data-context';
 import { runPoolFilter } from './engine/sandbox';
 import { initSubscriptionManager, refreshSubscriptions, getTrackedSubscriptions } from './subscription-manager';
-import { redis, yfinance } from './singletons';
+import { redis, yfinance, fugle } from './singletons';
 import type { RuleConfig, TickData } from './types/rule';
 import type { SignalPayloadDto } from '@stock-notifier/shared';
 import { resolveOrderRouting } from '@stock-notifier/shared';
@@ -42,7 +42,6 @@ const io = new SocketIO(httpServer, {
 });
 
 const prisma = new PrismaClient();
-const fugle = new FugleService(process.env.FUGLE_API_KEY || '');
 const notifier = new NotificationService();
 const ruleEngine = new RuleEngine();
 
@@ -77,6 +76,7 @@ app.use('/api/bind', bindRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/plans', plansRouter);
 app.use('/api/trading-app', tradingAppRouter);
+app.use('/api/admin', adminRouter);
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 

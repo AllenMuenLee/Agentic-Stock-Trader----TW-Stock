@@ -282,6 +282,9 @@ export interface PlanStatus {
     planName: string;
     canDownloadTradingApp: boolean;
     canUseDynamicPool: boolean;
+    /** The paid plan (PLAN_399/PLAN_799) this user has registered interest in, if any — real payment isn't wired up yet, so this is not the same as `planId`. */
+    preRegisteredPlanId: PlanId | null;
+    preRegisteredAt: string | null;
     usage: {
       rulesToday: number;
       rulesLimit: number | null;

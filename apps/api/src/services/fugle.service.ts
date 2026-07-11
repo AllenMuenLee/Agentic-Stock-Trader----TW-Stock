@@ -1,14 +1,29 @@
 import { EventEmitter } from 'events';
 import type { TickData } from '../types/rule.js';
+import { getMarketSession } from '@stock-notifier/shared';
 
 type FugleTickHandler = (tick: TickData) => void;
+
+// Interval between REST-polling fetches for symbols that fell back off the
+// WebSocket (Fugle plan's real-time subscription cap reached).
+const REST_POLL_INTERVAL_MS = 15000;
 
 export class FugleService extends EventEmitter {
   private apiKey: string;
   private subscribedSymbols: Set<string> = new Set();
   private wsConnections: Map<string, unknown> = new Map();
   private client: unknown = null;
+  private restClient: unknown = null;
   private isSimulation = false;
+  /** Symbols that exceeded the WebSocket subscription cap — polled via REST instead. */
+  private restPolling: Map<string, NodeJS.Timeout> = new Map();
+  /**
+   * Max concurrent Fugle WebSocket symbol subscriptions before new symbols fall
+   * back to REST polling. Env-configurable (FUGLE_WS_MAX_SYMBOLS) since the real
+   * cap is Fugle-plan-specific and not something this codebase can verify —
+   * tune it to your actual plan's limit.
+   */
+  private wsMaxSymbols = Number(process.env.FUGLE_WS_MAX_SYMBOLS) || 20;
 
   constructor(apiKey: string) {
     super();
@@ -24,9 +39,10 @@ export class FugleService extends EventEmitter {
     }
 
     try {
-      const { WebSocketClient } = await import('@fugle/marketdata');
+      const { WebSocketClient, RestClient } = await import('@fugle/marketdata');
       this.client = new WebSocketClient({ apiKey: this.apiKey });
-      
+      this.restClient = new RestClient({ apiKey: this.apiKey });
+
       const wsClient = this.client as any;
       wsClient.stock.on('message', (msg: unknown) => {
         try {
@@ -63,11 +79,24 @@ export class FugleService extends EventEmitter {
   }
 
   subscribe(symbol: string): void {
-    if (this.subscribedSymbols.has(symbol)) return;
+    if (this.subscribedSymbols.has(symbol) || this.restPolling.has(symbol)) return;
+
+    // Simulation mode has no real WebSocket capacity to exceed — just track
+    // membership for startSimulation()'s mock tick loop, same as before.
+    if (!this.client || this.isSimulation) {
+      this.subscribedSymbols.add(symbol);
+      return;
+    }
+
+    if (this.subscribedSymbols.size >= this.wsMaxSymbols) {
+      console.warn(
+        `[Fugle] WebSocket subscription cap (${this.wsMaxSymbols}) reached — falling back to REST polling (${REST_POLL_INTERVAL_MS / 1000}s) for ${symbol}`,
+      );
+      this.startRestPolling(symbol);
+      return;
+    }
+
     this.subscribedSymbols.add(symbol);
-
-    if (!this.client || this.isSimulation) return;
-
     try {
       const wsClient = this.client as any;
       wsClient.stock.subscribe({ channel: 'quotes', symbol });
@@ -78,6 +107,12 @@ export class FugleService extends EventEmitter {
   }
 
   unsubscribe(symbol: string): void {
+    if (this.restPolling.has(symbol)) {
+      this.stopRestPolling(symbol);
+      console.log(`[Fugle] Stopped REST polling for ${symbol}.`);
+      return;
+    }
+
     if (!this.subscribedSymbols.has(symbol)) return;
     this.subscribedSymbols.delete(symbol);
     console.log(`[Fugle] Unsubscribed from ${symbol}. Current subscriptions: ${Array.from(this.subscribedSymbols).join(', ')}`);
@@ -93,6 +128,76 @@ export class FugleService extends EventEmitter {
 
   onTick(handler: FugleTickHandler): void {
     this.on('tick', handler);
+  }
+
+  /** Current WS-vs-REST split of tracked symbols — used by the admin dashboard. */
+  getSubscriptionStatus(): { websocket: string[]; restPolling: string[] } {
+    return {
+      websocket: [...this.subscribedSymbols],
+      restPolling: [...this.restPolling.keys()],
+    };
+  }
+
+  /**
+   * Polls Fugle's REST intraday quote endpoint every REST_POLL_INTERVAL_MS for
+   * a symbol that exceeded the WebSocket subscription cap, emitting the same
+   * 'tick' event the WebSocket path does — the rest of the pipeline (Redis
+   * recording, rule evaluation, Socket.io broadcast) needs no awareness of
+   * which transport a given symbol is using.
+   */
+  private startRestPolling(symbol: string): void {
+    const poll = async () => {
+      // Skip the fetch (but keep the interval alive) when the market's
+      // definitely closed — avoids burning REST quota for no reason. Resumes
+      // automatically once resolveOrderRouting's session helper reports open.
+      const session = getMarketSession(Math.floor(Date.now() / 1000));
+      if (session.session === 'CLOSED') return;
+
+      try {
+        const rest = this.restClient as any;
+        const quote = await rest.stock.intraday.quote({ symbol });
+        const tick = this.quoteToTick(symbol, quote);
+        if (tick) this.emit('tick', tick);
+      } catch (e) {
+        console.error(`[Fugle] REST quote fetch failed for ${symbol}:`, e);
+      }
+    };
+
+    poll(); // fetch immediately so the fallback isn't stale for up to REST_POLL_INTERVAL_MS
+    this.restPolling.set(symbol, setInterval(poll, REST_POLL_INTERVAL_MS));
+  }
+
+  private stopRestPolling(symbol: string): void {
+    const timer = this.restPolling.get(symbol);
+    if (timer) clearInterval(timer);
+    this.restPolling.delete(symbol);
+  }
+
+  /** Converts a Fugle REST intraday quote response into the same TickData shape the WebSocket path emits. */
+  private quoteToTick(symbol: string, quote: any): TickData | null {
+    if (!quote) return null;
+    const price = Number(quote.lastPrice ?? quote.closePrice ?? 0);
+    if (!(price > 0)) return null;
+
+    const bid = quote.bids?.[0];
+    const ask = quote.asks?.[0];
+
+    return {
+      symbol,
+      price,
+      volume: Number(quote.total?.tradeVolume ?? 0),
+      timestamp: new Date(),
+      open: Number(quote.openPrice) || undefined,
+      high: Number(quote.highPrice) || undefined,
+      low: Number(quote.lowPrice) || undefined,
+      close: Number(quote.closePrice ?? quote.lastPrice) || undefined,
+      change: Number(quote.change) || undefined,
+      changePercent: Number(quote.changePercent) || undefined,
+      bid: Number(bid?.price) || undefined,
+      ask: Number(ask?.price) || undefined,
+      bidVolume: Number(bid?.size) || undefined,
+      askVolume: Number(ask?.size) || undefined,
+    };
   }
 
   private handleFugleMessage(symbol: string, rawData: unknown): void {

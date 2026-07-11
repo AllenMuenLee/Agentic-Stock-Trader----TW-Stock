@@ -18,6 +18,7 @@ export default function PlansPage() {
   const [status, setStatus] = useState<PlanStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [switching, setSwitching] = useState<string | null>(null);
+  const [preRegistering, setPreRegistering] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
@@ -43,6 +44,30 @@ export default function PlansPage() {
       alert(err instanceof Error ? err.message : '切換方案失敗');
     } finally {
       setSwitching(null);
+    }
+  };
+
+  const preRegister = async (planId: string) => {
+    setPreRegistering(planId);
+    try {
+      const s = await api.preRegisterPlan(planId);
+      setStatus(s);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '預約失敗');
+    } finally {
+      setPreRegistering(null);
+    }
+  };
+
+  const cancelPreRegister = async () => {
+    setPreRegistering('cancel');
+    try {
+      const s = await api.cancelPreRegistration();
+      setStatus(s);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '取消預約失敗');
+    } finally {
+      setPreRegistering(null);
     }
   };
 
@@ -140,6 +165,8 @@ export default function PlansPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {plans.map((plan: PlanDefinition) => {
           const isCurrent = plan.id === current.planId;
+          const isPaid = plan.id === 'PLAN_399' || plan.id === 'PLAN_799';
+          const isPreRegisteredForThis = current.preRegisteredPlanId === plan.id;
           return (
             <div
               key={plan.id}
@@ -163,19 +190,43 @@ export default function PlansPage() {
                 ))}
               </ul>
 
-              <button
-                onClick={() => switchPlan(plan.id)}
-                disabled={isCurrent || switching === plan.id}
-                className={isCurrent ? 'btn-ghost text-sm cursor-default' : 'btn-primary text-sm flex items-center justify-center gap-1.5'}
-              >
-                {switching === plan.id ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : isCurrent ? (
-                  '目前方案'
+              {isCurrent ? (
+                <button disabled className="btn-ghost text-sm cursor-default">
+                  目前方案
+                </button>
+              ) : isPaid ? (
+                isPreRegisteredForThis ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-emerald-400 flex items-center gap-1.5">
+                      <Check className="w-3.5 h-3.5 flex-shrink-0" />
+                      已預約，開放付款後將優先通知您
+                    </p>
+                    <button
+                      onClick={cancelPreRegister}
+                      disabled={preRegistering === 'cancel'}
+                      className="btn-ghost text-sm w-full flex items-center justify-center"
+                    >
+                      {preRegistering === 'cancel' ? <RefreshCw className="w-4 h-4 animate-spin" /> : '取消預約'}
+                    </button>
+                  </div>
                 ) : (
-                  '切換至此方案'
-                )}
-              </button>
+                  <button
+                    onClick={() => preRegister(plan.id)}
+                    disabled={preRegistering === plan.id}
+                    className="btn-primary text-sm flex items-center justify-center gap-1.5"
+                  >
+                    {preRegistering === plan.id ? <RefreshCw className="w-4 h-4 animate-spin" /> : '預約此方案'}
+                  </button>
+                )
+              ) : (
+                <button
+                  onClick={() => switchPlan(plan.id)}
+                  disabled={switching === plan.id}
+                  className="btn-primary text-sm flex items-center justify-center gap-1.5"
+                >
+                  {switching === plan.id ? <RefreshCw className="w-4 h-4 animate-spin" /> : '切換至此方案'}
+                </button>
+              )}
             </div>
           );
         })}

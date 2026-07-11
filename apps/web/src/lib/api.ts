@@ -104,6 +104,10 @@ export const api = {
   getPlanStatus: () => fetchJson<PlanStatus>('/plans/me'),
   switchPlan: (planId: string) =>
     fetchJson<PlanStatus>('/plans/switch', { method: 'POST', body: JSON.stringify({ planId }) }),
+  preRegisterPlan: (planId: string) =>
+    fetchJson<PlanStatus>('/plans/pre-register', { method: 'POST', body: JSON.stringify({ planId }) }),
+  cancelPreRegistration: () =>
+    fetchJson<PlanStatus>('/plans/pre-register', { method: 'DELETE' }),
 
   // Trading app activity — trades executed locally by the trading-app CLI
   getTradingActivity: () => fetchJson<TradeActivityDto[]>('/trading-app/activity'),

@@ -8,10 +8,19 @@ datasource db {
 }
 
 model User {
-  id                String    @id @default(cuid())
-  username          String    @unique
-  passwordHash      String
-  email             String?   @unique
+  id                     String    @id @default(cuid())
+  // Auto-derived display name (from the email's local-part at registration,
+  // disambiguated on collision) — no longer a registration form field. Login
+  // and account identity are by `email` now, not `username`.
+  username               String    @unique
+  passwordHash           String
+  // Registration/login identifier — required, unique, and must be verified
+  // (see emailVerified) before the account can log in. Also doubles as the
+  // notification email shown/editable on the settings page.
+  email                  String    @unique
+  emailVerified          Boolean   @default(false)
+  emailVerifyToken       String?   @unique
+  emailVerifyTokenExpiry DateTime?
   lineUserId        String?
   lineBindCode      String?
   lineBindExpiry    DateTime?
@@ -23,6 +32,7 @@ model User {
   rules             Rule[]
   tradeActivities   TradeActivity[]
   accountSnapshot   AccountSnapshot?
+  preRegistration   PreRegistration?
 
   // ─── Subscription plan & daily usage quotas ──────────────────────────────
   plan              String    @default("FREE")   // "FREE" | "PLAN_399" | "PLAN_799"
@@ -134,6 +144,17 @@ model AccountSnapshot {
   cash      Float
   positions String   // JSON-serialized AccountPosition[]
   updatedAt DateTime @updatedAt
+}
+
+// Records a logged-in user's interest in a paid plan while real payment isn't
+// wired up yet. One row per user (their current choice) — re-registering
+// upserts rather than accumulating history.
+model PreRegistration {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  planId    String   // "PLAN_399" | "PLAN_799"
+  createdAt DateTime @default(now())
 }
 
 model ChatMessage {

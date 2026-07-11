@@ -10,29 +10,50 @@ export interface NotificationPayload {
 }
 
 export class NotificationService {
-  async sendEmail(to: string, payload: NotificationPayload): Promise<void> {
-    const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM } = process.env;
-
-    if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-      console.warn('[Notification] Email not configured');
-      return;
-    }
-
-    const transporter = nodemailer.createTransport({
+  private getTransporter(): nodemailer.Transporter | null {
+    const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
+    if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) return null;
+    return nodemailer.createTransport({
       host: SMTP_HOST,
       port: Number(SMTP_PORT) || 587,
       secure: false,
       auth: { user: SMTP_USER, pass: SMTP_PASS },
     });
+  }
+
+  async sendEmail(to: string, payload: NotificationPayload): Promise<void> {
+    const transporter = this.getTransporter();
+    if (!transporter) {
+      console.warn('[Notification] Email not configured');
+      return;
+    }
 
     await transporter.sendMail({
-      from: EMAIL_FROM || SMTP_USER,
+      from: process.env.EMAIL_FROM || process.env.SMTP_USER,
       to,
       subject: `[Stock Alert] ${payload.title}`,
       html: this.buildEmailHtml(payload),
     });
 
     console.log(`[Notification] Email sent to ${to}`);
+  }
+
+  /** Sends the account-activation email with a link back to the frontend's /verify-email page. */
+  async sendVerificationEmail(to: string, verifyUrl: string): Promise<void> {
+    const transporter = this.getTransporter();
+    if (!transporter) {
+      console.warn('[Notification] Email not configured — cannot send verification email');
+      return;
+    }
+
+    await transporter.sendMail({
+      from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+      to,
+      subject: '請驗證您的 AI股探 帳號',
+      html: this.buildVerificationEmailHtml(verifyUrl),
+    });
+
+    console.log(`[Notification] Verification email sent to ${to}`);
   }
 
   async sendLine(lineUserId: string, payload: NotificationPayload): Promise<void> {
@@ -113,6 +134,26 @@ export class NotificationService {
     );
 
     console.log(`[Notification] Discord DM sent to user ${discordUserId}`);
+  }
+
+  private buildVerificationEmailHtml(verifyUrl: string): string {
+    return `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: #1e293b; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
+          <h2 style="margin: 0;">📊 AI股探</h2>
+        </div>
+        <div style="background: #f8fafc; padding: 20px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0;">
+          <h3 style="color: #1e293b;">請驗證您的帳號</h3>
+          <p style="color: #475569;">感謝您註冊 AI股探！請點擊下方按鈕完成 Email 驗證，即可開始使用。</p>
+          <p style="text-align: center; margin: 24px 0;">
+            <a href="${verifyUrl}" style="background: #0ea5e9; color: white; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: bold;">驗證我的帳號</a>
+          </p>
+          <p style="color: #64748b; font-size: 13px;">若按鈕無法點擊，請複製以下連結至瀏覽器開啟：<br>${verifyUrl}</p>
+          <hr style="border-color: #e2e8f0;">
+          <p style="font-size: 12px; color: #94a3b8;">此連結將於 24 小時後失效。若您並未註冊 AI股探，請忽略此信件。</p>
+        </div>
+      </div>
+    `;
   }
 
   private buildEmailHtml(payload: NotificationPayload): string {
