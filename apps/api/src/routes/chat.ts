@@ -16,11 +16,12 @@ const gemini = new GeminiService(
   process.env.GOOGLE_MODEL,
 );
 
-// GET /api/chat — list all sessions with preview + connected rule
-router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
+// GET /api/chat — list this user's own sessions with preview + connected rule
+router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const sessionGroups = await prisma.chatMessage.groupBy({
       by: ['sessionId'],
+      where: { userId: req.user!.id },
       _count: { id: true },
       _max: { createdAt: true },
       _min: { createdAt: true },
@@ -33,7 +34,7 @@ router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
 
     // First user message per session as preview text
     const firstMessages = await prisma.chatMessage.findMany({
-      where: { sessionId: { in: sessionIds }, role: 'user' },
+      where: { sessionId: { in: sessionIds }, userId: req.user!.id, role: 'user' },
       orderBy: { createdAt: 'asc' },
       distinct: ['sessionId'],
       select: { sessionId: true, content: true },
@@ -42,7 +43,7 @@ router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
 
     // Rules connected to these sessions
     const rules = await prisma.rule.findMany({
-      where: { sessionId: { in: sessionIds } },
+      where: { sessionId: { in: sessionIds }, userId: req.user!.id },
       select: { id: true, name: true, sessionId: true, isActive: true, poolType: true },
     });
     const ruleBySession = new Map(rules.map((r) => [r.sessionId!, r]));
@@ -62,11 +63,11 @@ router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
   }
 });
 
-// GET /api/chat/:sessionId — fetch conversation history
+// GET /api/chat/:sessionId — fetch conversation history (only if it belongs to the caller)
 router.get('/:sessionId', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const messages = await prisma.chatMessage.findMany({
-      where: { sessionId: req.params.sessionId },
+      where: { sessionId: req.params.sessionId, userId: req.user!.id },
       orderBy: { createdAt: 'asc' },
     });
     res.json(messages);
@@ -104,11 +105,11 @@ router.post('/:sessionId', async (req: Request, res: Response, next: NextFunctio
     // Save user message and load history before opening SSE stream so that
     // any Prisma failure here still returns a normal HTTP error (not ECONNRESET)
     await prisma.chatMessage.create({
-      data: { sessionId, role: 'user', content: message },
+      data: { sessionId, userId: req.user!.id, role: 'user', content: message },
     });
 
     const history = await prisma.chatMessage.findMany({
-      where: { sessionId },
+      where: { sessionId, userId: req.user!.id },
       orderBy: { createdAt: 'asc' },
       take: 20,
     });
@@ -131,7 +132,7 @@ router.post('/:sessionId', async (req: Request, res: Response, next: NextFunctio
 
     // Save assistant response
     await prisma.chatMessage.create({
-      data: { sessionId, role: 'assistant', content: result.content },
+      data: { sessionId, userId: req.user!.id, role: 'assistant', content: result.content },
     });
 
     if (result.ruleConfig) {
@@ -152,10 +153,10 @@ router.post('/:sessionId', async (req: Request, res: Response, next: NextFunctio
   }
 });
 
-// DELETE /api/chat/:sessionId — clear conversation
+// DELETE /api/chat/:sessionId — clear conversation (only the caller's own)
 router.delete('/:sessionId', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    await prisma.chatMessage.deleteMany({ where: { sessionId: req.params.sessionId } });
+    await prisma.chatMessage.deleteMany({ where: { sessionId: req.params.sessionId, userId: req.user!.id } });
     res.json({ ok: true });
   } catch (err) {
     next(err);

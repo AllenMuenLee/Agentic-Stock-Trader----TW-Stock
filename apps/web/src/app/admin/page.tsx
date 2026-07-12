@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Lock, Users, Star, Radio, RefreshCw, LogOut } from 'lucide-react';
-import { adminApi, AdminStats, getAdminToken, setAdminToken, clearAdminToken } from '@/lib/admin-api';
+import { Lock, Users, Star, Radio, RefreshCw, LogOut, CheckCircle2, XCircle, Trash2 } from 'lucide-react';
+import { adminApi, AdminStats, AdminUser, getAdminToken, setAdminToken, clearAdminToken } from '@/lib/admin-api';
 
 function LoginGate({ onSuccess }: { onSuccess: () => void }) {
   const [password, setPassword] = useState('');
@@ -66,6 +66,94 @@ function StockBadge({ symbol, transport }: { symbol: string; transport: 'websock
     >
       {symbol}
     </span>
+  );
+}
+
+function UserTable() {
+  const [users, setUsers] = useState<AdminUser[] | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setUsers(await adminApi.getUsers());
+    } catch {
+      setUsers([]);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleDelete = async (user: AdminUser) => {
+    if (!confirm(`確定要刪除使用者 ${user.email} 嗎？此操作將一併刪除其所有規則與交易紀錄，無法復原。`)) return;
+    setDeletingId(user.id);
+    try {
+      await adminApi.deleteUser(user.id);
+      setUsers((prev) => prev?.filter((u) => u.id !== user.id) ?? null);
+    } catch {
+      alert('刪除失敗，請稍後再試');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  return (
+    <div className="card p-5">
+      <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-1.5 mb-3">
+        <Users className="w-4 h-4 text-sky-400" />
+        使用者管理（{users?.length ?? '…'}）
+      </h2>
+      {users === null ? (
+        <div className="flex items-center justify-center py-8">
+          <RefreshCw className="w-4 h-4 text-slate-500 animate-spin" />
+        </div>
+      ) : users.length === 0 ? (
+        <p className="text-sm text-slate-500">目前沒有使用者。</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-slate-500 border-b border-slate-800">
+                <th className="pb-2 pr-3 font-medium">Email</th>
+                <th className="pb-2 pr-3 font-medium">驗證狀態</th>
+                <th className="pb-2 pr-3 font-medium">方案</th>
+                <th className="pb-2 pr-3 font-medium">註冊時間</th>
+                <th className="pb-2 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.id} className="border-b border-slate-800/60 last:border-0">
+                  <td className="py-2 pr-3 text-slate-200">{u.email}</td>
+                  <td className="py-2 pr-3">
+                    {u.emailVerified ? (
+                      <span className="inline-flex items-center gap-1 text-xs text-emerald-400">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> 已驗證
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs text-amber-400">
+                        <XCircle className="w-3.5 h-3.5" /> 未驗證
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-3 text-slate-400">{u.plan}</td>
+                  <td className="py-2 pr-3 text-slate-500 tabular-nums">{new Date(u.createdAt).toLocaleDateString()}</td>
+                  <td className="py-2 text-right">
+                    <button
+                      onClick={() => handleDelete(u)}
+                      disabled={deletingId === u.id}
+                      className="text-red-400 hover:text-red-300 disabled:opacity-50 inline-flex items-center gap-1 text-xs"
+                      title="刪除使用者"
+                    >
+                      {deletingId === u.id ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -182,6 +270,8 @@ function Dashboard() {
           </div>
         )}
       </div>
+
+      <UserTable />
     </div>
   );
 }

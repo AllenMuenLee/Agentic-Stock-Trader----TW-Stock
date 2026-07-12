@@ -16,7 +16,7 @@ export class NotificationService {
     return nodemailer.createTransport({
       host: SMTP_HOST,
       port: Number(SMTP_PORT) || 587,
-      secure: false,
+      secure: Number(SMTP_PORT) === 465,
       auth: { user: SMTP_USER, pass: SMTP_PASS },
     });
   }
@@ -149,6 +149,9 @@ export class NotificationService {
             <a href="${verifyUrl}" style="background: #0ea5e9; color: white; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: bold;">驗證我的帳號</a>
           </p>
           <p style="color: #64748b; font-size: 13px;">若按鈕無法點擊，請複製以下連結至瀏覽器開啟：<br>${verifyUrl}</p>
+          <p style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 10px 14px; color: #92400e; font-size: 13px;">
+            📌 若收件匣中沒有看到這封信，請查看您的「垃圾郵件」或「促銷」資料夾。
+          </p>
           <hr style="border-color: #e2e8f0;">
           <p style="font-size: 12px; color: #94a3b8;">此連結將於 24 小時後失效。若您並未註冊 AI股探，請忽略此信件。</p>
         </div>

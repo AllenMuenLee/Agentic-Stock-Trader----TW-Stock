@@ -33,6 +33,7 @@ model User {
   tradeActivities   TradeActivity[]
   accountSnapshot   AccountSnapshot?
   preRegistration   PreRegistration?
+  chatMessages      ChatMessage[]
 
   // ─── Subscription plan & daily usage quotas ──────────────────────────────
   plan              String    @default("FREE")   // "FREE" | "PLAN_399" | "PLAN_799"
@@ -159,10 +160,13 @@ model PreRegistration {
 
 model ChatMessage {
   id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
   sessionId String
   role      String
   content   String
   createdAt DateTime @default(now())
 
+  @@index([userId, sessionId])
   @@index([sessionId])
 }

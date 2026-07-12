@@ -7,6 +7,7 @@ import { AuthProvider } from '@/lib/auth';
 export const metadata: Metadata = {
   title: 'AI股探 — AI 股票監控系統',
   description: 'AI 驅動的股票信號監控系統',
+  icons: { icon: '/Logo.png' },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

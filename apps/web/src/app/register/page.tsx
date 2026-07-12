@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { TrendingUp, UserPlus, MailCheck } from 'lucide-react';
+import Image from 'next/image';
+import { UserPlus, MailCheck } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 
 export default function RegisterPage() {
@@ -35,7 +36,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 mb-4">
-            <TrendingUp className="w-8 h-8 text-sky-400" />
+            <Image src="/Logo.png" alt="AI股探" width={32} height={32} className="rounded" />
             <span className="text-2xl font-bold text-slate-100">AI股探</span>
           </div>
           <h1 className="text-xl font-semibold text-slate-200">建立帳號</h1>
@@ -48,6 +49,9 @@ export default function RegisterPage() {
             <h2 className="text-slate-200 font-semibold">請查收您的 Email</h2>
             <p className="text-sm text-slate-400">
               我們已寄送驗證信至 <span className="text-slate-200">{email}</span>，請點擊信中的連結完成驗證後即可登入。
+            </p>
+            <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+              📌 沒看到信件嗎？請確認「垃圾郵件」或「促銷」資料夾。
             </p>
             <Link href="/login" className="btn-primary w-full inline-flex items-center justify-center mt-2">
               前往登入

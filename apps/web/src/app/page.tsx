@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { TrendingUp, Bot, Bell, BarChart2, Shield, Zap } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 
@@ -61,6 +62,8 @@ export default function HomePage() {
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-sky-500/5 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative max-w-5xl mx-auto px-6 py-24 text-center">
+          <Image src="/Logo.png" alt="AI股探" width={72} height={72} className="mx-auto mb-6 rounded-2xl" priority />
+
           <div className="inline-flex items-center gap-2 bg-sky-500/10 border border-sky-500/20 rounded-full px-4 py-1.5 text-sky-400 text-sm font-medium mb-8">
             <TrendingUp className="w-4 h-4" />
             AI 驅動的股票監控平台

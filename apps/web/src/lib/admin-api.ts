@@ -38,8 +38,19 @@ export interface AdminStats {
   subscriptionBreakdown: { websocket: string[]; restPolling: string[] };
 }
 
+export interface AdminUser {
+  id: string;
+  email: string;
+  username: string;
+  emailVerified: boolean;
+  plan: string;
+  createdAt: string;
+}
+
 export const adminApi = {
   login: (password: string) =>
     fetchAdminJson<{ token: string }>('/admin/login', { method: 'POST', body: JSON.stringify({ password }) }),
   getStats: () => fetchAdminJson<AdminStats>('/admin/stats'),
+  getUsers: () => fetchAdminJson<AdminUser[]>('/admin/users'),
+  deleteUser: (id: string) => fetchAdminJson<{ ok: boolean }>(`/admin/users/${id}`, { method: 'DELETE' }),
 };

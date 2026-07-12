@@ -50,4 +50,51 @@ router.get('/stats', async (_req: Request, res: Response, next: NextFunction) =>
   }
 });
 
+// GET /api/admin/users — every user's email/verification status, for account management.
+router.get('/users', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const users = await prisma.user.findMany({
+      select: { id: true, email: true, username: true, emailVerified: true, plan: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(
+      users.map((u) => ({
+        id: u.id,
+        email: u.email,
+        username: u.username,
+        emailVerified: u.emailVerified,
+        plan: u.plan,
+        createdAt: u.createdAt.toISOString(),
+      })),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/admin/users/:id — removes the user and every row that references it
+// (no cascading FK is defined on these relations, so dependents must go first).
+router.delete('/users/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) {
+      res.status(404).json({ error: '找不到使用者' });
+      return;
+    }
+
+    await prisma.trigger.deleteMany({ where: { rule: { userId: id } } });
+    await prisma.rule.deleteMany({ where: { userId: id } });
+    await prisma.tradeActivity.deleteMany({ where: { userId: id } });
+    await prisma.accountSnapshot.deleteMany({ where: { userId: id } });
+    await prisma.preRegistration.deleteMany({ where: { userId: id } });
+    await prisma.chatMessage.deleteMany({ where: { userId: id } });
+    await prisma.user.delete({ where: { id } });
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

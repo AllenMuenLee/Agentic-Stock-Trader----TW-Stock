@@ -2,8 +2,9 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useSearchParams } from 'next/navigation';
-import { CheckCircle2, XCircle, RefreshCw, TrendingUp } from 'lucide-react';
+import { CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
 
 function VerifyEmailInner() {
@@ -33,7 +34,7 @@ function VerifyEmailInner() {
     <div className="flex-1 flex items-center justify-center px-4 py-16">
       <div className="w-full max-w-sm text-center">
         <div className="inline-flex items-center gap-2 mb-6">
-          <TrendingUp className="w-8 h-8 text-sky-400" />
+          <Image src="/Logo.png" alt="AI股探" width={32} height={32} className="rounded" />
           <span className="text-2xl font-bold text-slate-100">AI股探</span>
         </div>
 

@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { TrendingUp, LogIn, MailCheck } from 'lucide-react';
+import Image from 'next/image';
+import { LogIn, MailCheck } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 
@@ -48,7 +49,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 mb-4">
-            <TrendingUp className="w-8 h-8 text-sky-400" />
+            <Image src="/Logo.png" alt="AI股探" width={32} height={32} className="rounded" />
             <span className="text-2xl font-bold text-slate-100">AI股探</span>
           </div>
           <h1 className="text-xl font-semibold text-slate-200">登入帳號</h1>
@@ -93,7 +94,7 @@ export default function LoginPage() {
               <p className="text-amber-400">尚未收到驗證信嗎？</p>
               {resendState === 'sent' ? (
                 <p className="text-emerald-400 flex items-center gap-1.5">
-                  <MailCheck className="w-3.5 h-3.5" /> 已重新寄送，請至信箱查看
+                  <MailCheck className="w-3.5 h-3.5" /> 已重新寄送，請至信箱查看（若沒看到，也請確認垃圾郵件資料夾）
                 </p>
               ) : (
                 <button

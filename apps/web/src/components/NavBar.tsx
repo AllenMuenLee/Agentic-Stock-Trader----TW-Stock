@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { MessageSquare, LayoutDashboard, Settings, TrendingUp, LogOut, User, BookOpen, CreditCard } from 'lucide-react';
+import { MessageSquare, LayoutDashboard, Settings, LogOut, User, BookOpen, CreditCard } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 
 const links = [
@@ -20,7 +21,7 @@ export default function NavBar() {
     <nav className="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 flex items-center h-14 gap-2">
         <Link href="/" className="flex items-center gap-2 mr-6">
-          <TrendingUp className="w-5 h-5 text-sky-400" />
+          <Image src="/Logo.png" alt="AI股探" width={20} height={20} className="rounded" />
           <span className="font-bold text-slate-100 text-sm">AI股探</span>
         </Link>
 
