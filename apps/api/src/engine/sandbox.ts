@@ -1,5 +1,5 @@
 import vm from 'vm';
-import type { Signal, TaiwanPriceType, TaiwanTimeInForce } from '@stock-notifier/shared';
+import { SIGNAL_LABEL, type Signal, type TaiwanPriceType, type TaiwanTimeInForce } from '@stock-notifier/shared';
 import type { DataContext } from './data-context';
 
 const VALID_PRICE_TYPES: readonly TaiwanPriceType[] = ['Limit', 'Market'];
@@ -72,7 +72,7 @@ function validateResult(value: unknown): SandboxOutcome {
   const message =
     typeof obj.message === 'string' && obj.message.trim().length > 0
       ? obj.message
-      : `${signal} signal triggered`;
+      : `已觸發${SIGNAL_LABEL[signal as Signal]}訊號`;
 
   // Rule code commonly spreads a whole `resolve_order_type()` result (e.g.
   // `{ ...routing, signal, message }`) into its return object, which carries

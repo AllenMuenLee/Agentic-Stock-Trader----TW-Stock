@@ -7,6 +7,14 @@ const POLL_INTERVAL_MS = 15000;
 
 let cached: AccountInfo | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
+let consecutiveFailures = 0;
+
+// A Fubon SDK accounting panic (see python/fubon_bridge.py) can poison an
+// internal Rust mutex, after which every subsequent accounting call fails
+// for the rest of that bridge process's life — so past this many
+// back-to-back failures, further polling is pure log spam. Stops until the
+// next startAccountSync() (i.e. the next successful reconnect).
+const MAX_CONSECUTIVE_FAILURES = 3;
 
 /**
  * The freshest known account snapshot — a plain RAM read, never a network call.
@@ -20,6 +28,7 @@ export function getCachedAccount(): AccountInfo | null {
 async function pollOnce(fubon: FubonClient, serverUrl: string, token: string): Promise<void> {
   try {
     cached = await fubon.getAccountInfo();
+    consecutiveFailures = 0;
     await axios.post(
       `${serverUrl}/api/trading-app/account`,
       { cash: cached.cash, positions: cached.positions },
@@ -27,6 +36,14 @@ async function pollOnce(fubon: FubonClient, serverUrl: string, token: string): P
     );
   } catch (err) {
     console.warn('[Account] 更新帳戶資訊失敗:', err instanceof Error ? err.message : err);
+    consecutiveFailures += 1;
+    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES && timer) {
+      clearInterval(timer);
+      timer = null;
+      console.error(
+        `[Account] 連續 ${MAX_CONSECUTIVE_FAILURES} 次更新失敗，已停止自動同步（富邦 SDK 可能已進入異常狀態）。'ALL' 數量的訊號將以 0 股處理，請中斷並重新連線以恢復。`,
+      );
+    }
   }
 }
 
@@ -39,6 +56,7 @@ async function pollOnce(fubon: FubonClient, serverUrl: string, token: string): P
  */
 export function startAccountSync(fubon: FubonClient, serverUrl: string, token: string): void {
   stopAccountSync();
+  consecutiveFailures = 0;
   pollOnce(fubon, serverUrl, token); // don't wait a full interval for the first snapshot
   timer = setInterval(() => pollOnce(fubon, serverUrl, token), POLL_INTERVAL_MS);
 }

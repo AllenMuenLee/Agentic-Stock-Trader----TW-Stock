@@ -10,22 +10,25 @@ Protocol: newline-delimited JSON on stdin/stdout.
 Credentials arrive only via stdin from the local CLI process (never over the
 network) and are held in memory only for the lifetime of this process.
 
-NOTE: The exact class/method names below (FubonSDK, Order, BSAction, ...)
-follow the shape documented in Fubon's official Neo SDK guide at the time
-this bridge was written. Verify them against the current official
-documentation before relying on this in production — brokerage SDKs change
-their surface between releases.
+NOTE: The class/method names below (FubonSDK, Order, BSAction, MarketType,
+PriceType, TimeInForce, OrderType, sdk.stock.place_order,
+sdk.accounting.{inventories,bank_remain}) have been checked against the
+locally installed fubon_neo package via `help()`/`dir()` — including that
+`place_order` lives on `sdk.stock`, not `sdk` directly (a real bug this
+file had), and that MarketType/PriceType/TimeInForce all have the members
+used below. Still worth re-checking after any fubon_neo version bump, since
+brokerage SDKs change their surface between releases — but this isn't
+speculative "written from general knowledge" any more.
 
-NOTE (order routing, unverified): `placeOrder` now maps Taiwan market-segment/
-price-type/time-in-force strings (computed by resolveOrderRouting() in
-market-session.ts / packages/shared/src/market-session.ts) onto
-`MarketType.Common/Odd/Fixing`, `PriceType.Limit/Market`, and
-`TimeInForce.ROD/IOC/FOK`, and passes `price=` on `Order(...)` for limit
-orders. Whether `MarketType` actually has `Odd`/`Fixing` members, and whether
-`Order(...)` accepts a `price` kwarg under that exact name, follow the same
-"written from general SDK knowledge, not verified against live docs or a
-real account" caveat as the rest of this file — check before real-money use,
-especially for 零股 (Odd) and 盤後定價 (Fixing) orders.
+NOTE (accounting calls, observed to panic): `sdk.accounting.bank_remain()`
+and `sdk.accounting.inventories()` have both been observed to raise
+`pyo3_runtime.PanicException` (a Rust-side panic surfaced through pyo3) for
+reasons not fully understood — an internal `unwrap()` on `None`, and once
+that's happened once, a poisoned-mutex panic on every subsequent accounting
+call for the rest of this process's life. Every action's handler below
+catches `BaseException` (not just `Exception`) specifically so this doesn't
+take down the whole bridge — but the account-sync data will stay stale/
+unavailable until the trading-app is restarted once this starts happening.
 
 Simulation ("模擬") trading: FubonSDK(url=SIMULATION_URL) points the SDK at
 Fubon's simulation endpoint instead of production; login/order calls are
@@ -130,7 +133,7 @@ def main():
                     order_kwargs["price"] = float(limit_price)
 
                 order = Order(**order_kwargs)
-                result = sdk.place_order(account, order)
+                result = sdk.stock.place_order(account, order)
                 emit(req_id, True, {"result": str(result)})
 
             elif action == "getAccount":
@@ -166,7 +169,18 @@ def main():
             else:
                 emit(req_id, False, error=f"Unknown action: {action}")
 
-        except Exception as exc:
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:
+            # Broader than `except Exception` on purpose: fubon_neo is a pyo3
+            # wrapper over a closed-source Rust extension, and a Rust-side
+            # panic (e.g. an internal `unwrap()` on None) surfaces as
+            # `pyo3_runtime.PanicException`, which pyo3 deliberately makes a
+            # BaseException subclass so it isn't swallowed by `except
+            # Exception`. Left uncaught, it kills this loop and orphans the
+            # Node side's pending request forever (see fubon-client.ts) — so
+            # every action's failure, panic or not, gets turned into a normal
+            # error reply instead of taking down the whole bridge process.
             emit(req_id, False, error=f"{exc}\n{traceback.format_exc()}")
 
 

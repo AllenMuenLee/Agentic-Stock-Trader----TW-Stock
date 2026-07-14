@@ -86,8 +86,8 @@ router.post('/test-notification', async (req: Request, res: Response, next: Next
     const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
 
     const payload = {
-      title: 'Test Notification',
-      message: 'This is a test notification from AI股探!',
+      title: '測試通知',
+      message: '這是一則來自 AI股探 的測試通知！',
       symbol: '2330',
       signal: 'BUY',
       price: 900,
@@ -109,7 +109,7 @@ router.post('/test-notification', async (req: Request, res: Response, next: Next
       return;
     }
 
-    res.json({ ok: true, message: `Test ${channel} notification sent` });
+    res.json({ ok: true, message: `已發送測試通知（${channel}）` });
   } catch (err) {
     next(err);
   }

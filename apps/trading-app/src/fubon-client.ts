@@ -60,6 +60,8 @@ export class FubonClient {
   private proc: ChildProcessWithoutNullStreams;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private nextId = 1;
+  /** Set once the bridge process is gone (crashed or shut down) — new calls fail fast instead of writing to a dead pipe. */
+  private dead: Error | null = null;
 
   constructor(pythonBin = process.env.PYTHON_BIN || 'python') {
     const scriptPath = path.join(__dirname, '..', 'python', 'fubon_bridge.py');
@@ -67,9 +69,26 @@ export class FubonClient {
 
     readline.createInterface({ input: this.proc.stdout }).on('line', (line) => this.handleLine(line));
     this.proc.stderr.on('data', (chunk: Buffer) => console.error(`[FubonBridge] ${chunk.toString().trim()}`));
+
+    // Without these two listeners, a dead/dying bridge process either hangs
+    // every in-flight and future call forever (no 'exit' handling) or takes
+    // down this whole Node process (an unhandled 'error' on stdin — e.g.
+    // EPIPE from writing to a pipe whose reader already exited — is fatal by
+    // default). Neither is acceptable for a live-trading process.
+    this.proc.on('error', (err) => this.killedBy(err));
+    this.proc.stdin.on('error', (err) => this.killedBy(err));
     this.proc.on('exit', (code) => {
       if (code !== null && code !== 0) console.warn(`[FubonBridge] process exited with code ${code}`);
+      this.killedBy(new Error(`Fubon bridge process exited (code ${code ?? 'null'})`));
     });
+  }
+
+  /** Fails every pending call and all future ones with the same error — idempotent. */
+  private killedBy(err: Error): void {
+    if (this.dead) return;
+    this.dead = err;
+    for (const { reject } of this.pending.values()) reject(err);
+    this.pending.clear();
   }
 
   private handleLine(line: string): void {
@@ -87,6 +106,7 @@ export class FubonClient {
   }
 
   private call(action: BridgeRequest['action'], params?: Record<string, unknown>): Promise<unknown> {
+    if (this.dead) return Promise.reject(this.dead);
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });

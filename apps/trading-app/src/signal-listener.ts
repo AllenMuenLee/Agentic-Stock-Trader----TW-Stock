@@ -8,7 +8,7 @@ export interface SignalEvent {
   symbol: string;
   signal: 'BUY' | 'SELL' | 'NOTIFY';
   price: number;
-  /** Suggested order size in shares, decided by the rule's own AI-generated code. Null for NOTIFY. 'ALL' is unresolved — see pending-orders.ts. */
+  /** Suggested order size in shares, decided by the rule's own AI-generated code. Null for NOTIFY. 'ALL' is unresolved — see trade-order.ts. */
   quantity: number | 'ALL' | null;
   /**
    * Resolved Taiwan order routing from the server. Null on all four fields when

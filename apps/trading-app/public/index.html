@@ -19,13 +19,22 @@
     </div>
 
     <form id="loginForm" class="card" novalidate>
-      <div class="field">
-        <label for="aiUsername">AI股探 帳號（註冊時使用的 Email）</label>
-        <input id="aiUsername" type="email" autocomplete="email" />
+      <div id="aiAutoLogin" class="field hidden">
+        <label>AI股探 帳號</label>
+        <div class="status-row" style="margin-bottom:0">
+          <span class="status-value">✅ <span id="aiSavedUsername"></span>（沿用上次登入）</span>
+          <button type="button" id="aiSwitchAccountBtn" class="secondary">改用其他帳號</button>
+        </div>
       </div>
-      <div class="field">
-        <label for="aiPassword">AI股探 密碼</label>
-        <input id="aiPassword" type="password" autocomplete="current-password" />
+      <div id="aiManualLogin">
+        <div class="field">
+          <label for="aiUsername">AI股探 帳號（註冊時使用的 Email）</label>
+          <input id="aiUsername" type="email" autocomplete="email" />
+        </div>
+        <div class="field">
+          <label for="aiPassword">AI股探 密碼</label>
+          <input id="aiPassword" type="password" autocomplete="current-password" />
+        </div>
       </div>
       <div class="field checkbox-field">
         <label>
@@ -70,12 +79,6 @@
       </div>
       <p class="hint" style="margin:10px 0 0">帳號：<span id="usernameLabel"></span></p>
       <button id="disconnectBtn" class="secondary" style="margin-top:12px">中斷連線</button>
-    </div>
-
-    <div id="pendingSection" class="hidden">
-      <h2>待確認交易</h2>
-      <p class="hint">規則觸發了以下交易訊號，尚未送出委託 — 請確認或拒絕每一筆。</p>
-      <div id="pendingList"></div>
     </div>
 
     <h2>交易活動</h2>

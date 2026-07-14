@@ -1,0 +1,40 @@
+[2026-07-14 10:55:58.539109600 +08:00 INFO] [login] personal_id="41610792"
+[2026-07-14 10:55:58.759589400 +08:00 INFO] this account require 2fa
+[2026-07-14 10:55:59.636844100 +08:00 INFO] [future_option_mapping]: 599.6774ms
+[2026-07-14 10:56:00.645271900 +08:00 INFO] [future_option_mapping]: 1.0057655s
+[2026-07-14 10:56:03.821200200 +08:00 INFO] [future_option_mapping]: 3.1747067s
+[2026-07-14 10:56:04.259572600 +08:00 INFO] [future_option_mapping]: 428.3249ms
+[2026-07-14 10:56:05.826447100 +08:00 INFO] [get inventories] account=Account { branch_no: "20203", account: "7900280", account_type: "stock", name: "測試2***" }
+[2026-07-14 10:56:06.582691300 +08:00 INFO] [inventory_result]: 754.476ms
+[2026-07-14 10:56:06.583201200 +08:00 INFO] [bank remain] account=Account { branch_no: "20203", account: "7900280", account_type: "stock", name: "測試2***" }
+[2026-07-14 10:56:06.935674900 +08:00 INFO] [bank remain]: 352.392ms
+[2026-07-14 10:57:02.936952600 +08:00 INFO] [login] personal_id="41610792"
+[2026-07-14 10:57:03.110245900 +08:00 INFO] this account require 2fa
+[2026-07-14 10:57:03.988333100 +08:00 INFO] [future_option_mapping]: 665.587ms
+[2026-07-14 10:57:04.213107600 +08:00 INFO] [future_option_mapping]: 219.2631ms
+[2026-07-14 10:57:04.672290200 +08:00 INFO] [future_option_mapping]: 457.4154ms
+[2026-07-14 10:57:04.879013600 +08:00 INFO] [future_option_mapping]: 192.7045ms
+[2026-07-14 10:57:05.848820100 +08:00 INFO] [get inventories] account=Account { branch_no: "20203", account: "7900280", account_type: "stock", name: "測試2***" }
+[2026-07-14 10:57:06.079226400 +08:00 INFO] [inventory_result]: 230.3078ms
+[2026-07-14 10:57:06.079705800 +08:00 INFO] [bank remain] account=Account { branch_no: "20203", account: "7900280", account_type: "stock", name: "測試2***" }
+[2026-07-14 10:57:06.293466200 +08:00 INFO] [bank remain]: 213.6929ms
+[2026-07-14 11:05:02.930866500 +08:00 INFO] [login] personal_id="41610792"
+[2026-07-14 11:05:02.962746500 +08:00 INFO] this account require 2fa
+[2026-07-14 11:05:03.053205 +08:00 INFO] [future_option_mapping]: 62.4335ms
+[2026-07-14 11:05:03.097364100 +08:00 INFO] [future_option_mapping]: 42.1448ms
+[2026-07-14 11:05:03.246592400 +08:00 INFO] [future_option_mapping]: 148.2642ms
+[2026-07-14 11:05:03.300229100 +08:00 INFO] [future_option_mapping]: 45.097ms
+[2026-07-14 11:05:03.391916 +08:00 INFO] [get inventories] account=Account { branch_no: "20203", account: "7900280", account_type: "stock", name: "測試2***" }
+[2026-07-14 11:05:03.418481800 +08:00 INFO] [inventory_result]: 26.5036ms
+[2026-07-14 11:05:03.419511600 +08:00 INFO] [bank remain] account=Account { branch_no: "20203", account: "7900280", account_type: "stock", name: "測試2***" }
+[2026-07-14 11:05:03.463434400 +08:00 INFO] [bank remain]: 43.8589ms
+[2026-07-14 12:42:55.726190400 +08:00 INFO] [login] personal_id="41610792"
+[2026-07-14 12:42:55.762301600 +08:00 INFO] this account require 2fa
+[2026-07-14 12:42:56.483752 +08:00 INFO] [future_option_mapping]: 660.6807ms
+[2026-07-14 12:42:56.525897100 +08:00 INFO] [future_option_mapping]: 39.3478ms
+[2026-07-14 12:42:56.810663200 +08:00 INFO] [future_option_mapping]: 283.3838ms
+[2026-07-14 12:42:56.914248500 +08:00 INFO] [future_option_mapping]: 94.2127ms
+[2026-07-14 12:42:58.407077500 +08:00 INFO] [get inventories] account=Account { branch_no: "20203", account: "7900280", account_type: "stock", name: "測試2***" }
+[2026-07-14 12:42:58.465032800 +08:00 INFO] [inventory_result]: 57.8728ms
+[2026-07-14 12:42:58.465947700 +08:00 INFO] [bank remain] account=Account { branch_no: "20203", account: "7900280", account_type: "stock", name: "測試2***" }
+[2026-07-14 12:42:58.573321200 +08:00 INFO] [bank remain]: 107.3039ms

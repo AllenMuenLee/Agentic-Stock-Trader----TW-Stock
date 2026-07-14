@@ -14,7 +14,7 @@ async function serializeStatus(user: { id: string; plan: string; rulesToday: num
   const plan = getPlan(user.plan);
   const preRegistration = await prisma.preRegistration.findUnique({ where: { userId: user.id } });
   return {
-    plans: Object.values(PLANS),
+    plans: Object.values(PLANS).filter(p => p.id !== 'UNLIMITED'),
     current: {
       planId: plan.id,
       planName: plan.name,

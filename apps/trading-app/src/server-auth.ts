@@ -5,3 +5,13 @@ export async function loginToServer(serverUrl: string, email: string, password: 
   const res = await axios.post<{ token: string }>(`${serverUrl}/api/auth/login`, { email, password });
   return res.data.token;
 }
+
+/** Checks whether a previously-saved JWT (see config.ts's aiToken) is still accepted by the server, so a restart can skip AI股探 login entirely when it is. */
+export async function verifyToken(serverUrl: string, token: string): Promise<boolean> {
+  try {
+    await axios.get(`${serverUrl}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+    return true;
+  } catch {
+    return false;
+  }
+}

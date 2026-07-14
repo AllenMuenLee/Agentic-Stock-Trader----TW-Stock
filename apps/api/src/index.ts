@@ -27,7 +27,7 @@ import { runPoolFilter } from './engine/sandbox';
 import { initSubscriptionManager, refreshSubscriptions, getTrackedSubscriptions } from './subscription-manager';
 import { redis, yfinance, fugle } from './singletons';
 import type { RuleConfig, TickData } from './types/rule';
-import type { SignalPayloadDto } from '@stock-notifier/shared';
+import { SIGNAL_LABEL, type SignalPayloadDto } from '@stock-notifier/shared';
 import { resolveOrderRouting } from '@stock-notifier/shared';
 
 // Fallback order size (shares) for BUY/SELL signals whose rule code doesn't
@@ -288,7 +288,7 @@ fugle.onTick(async (tick: TickData) => {
 
       // Send push notifications
       const payload = {
-        title: `${result.signal} Signal: ${tick.symbol}`,
+        title: `${tick.symbol} ${SIGNAL_LABEL[result.signal!]}訊號`,
         message: result.message!,
         symbol: tick.symbol,
         signal: result.signal,

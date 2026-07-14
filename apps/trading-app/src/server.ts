@@ -3,12 +3,12 @@ import fs from 'fs';
 import path from 'path';
 import express from 'express';
 import type { Socket } from 'socket.io-client';
-import { loadConfig, saveConfig } from './config';
-import { loginToServer } from './server-auth';
+import { loadConfig, saveConfig, clearSavedSession } from './config';
+import { loginToServer, verifyToken } from './server-auth';
 import { connectSignalListener, SignalEvent, SocketStatus } from './signal-listener';
 import { FubonClient } from './fubon-client';
 import { appendLocalActivity, readRecentLocalActivity, reportActivity } from './activity-log';
-import { addPendingOrder, listPendingOrders, takePendingOrder, PendingOrder } from './pending-orders';
+import type { TradeOrder } from './trade-order';
 import { startAccountSync, stopAccountSync, getCachedAccount } from './account-sync';
 import { openBrowser } from './open-browser';
 import { resolveOrderRouting } from './market-session';
@@ -31,6 +31,18 @@ const TEST_FUBON_PASSWORD = '12345678';
 const TEST_CERT_PATH = path.join(__dirname, '..', 'test-cert', '41610792.pfx');
 const TEST_CERT_PASSWORD = '12345678';
 
+// Last-resort safety net, not a substitute for catching errors at their
+// source. This process holds live state (Fubon SDK session, socket.io
+// connection, cached account snapshot) that's expensive to reconstruct, and
+// the Fubon SDK has shown multiple distinct ways to reject/panic once its
+// internal state gets poisoned (bank_remain, inventories, logout — see
+// python/fubon_bridge.py). For a locally-run trading app, staying up and
+// logging beats Node's default "crash the whole process" behavior on an
+// unhandled rejection we didn't anticipate at some call site.
+process.on('unhandledRejection', (reason) => {
+  console.error('[Fatal-avoided] Unhandled promise rejection:', reason instanceof Error ? reason.message : reason);
+});
+
 interface Session {
   token: string;
   socket: Socket;
@@ -50,13 +62,13 @@ interface Session {
 
 let session: Session | null = null;
 
-/** A signal arriving from the server only ever queues a pending order — nothing is sent to Fubon until the user confirms it in the UI. */
+/** A signal arriving from the server is executed against Fubon immediately — no user confirmation step. */
 function handleSignal(event: SignalEvent): void {
   if (!session) return;
   if (event.signal !== 'BUY' && event.signal !== 'SELL') return;
 
   const quantity = event.quantity ?? FALLBACK_QUANTITY;
-  const order = addPendingOrder({
+  const order: TradeOrder = {
     ruleId: event.ruleId,
     ruleName: event.ruleName,
     symbol: event.symbol,
@@ -64,19 +76,22 @@ function handleSignal(event: SignalEvent): void {
     quantity,
     price: event.price,
     // Preview only — the authoritative routing decision is recomputed fresh
-    // against the actual confirm-time clock in executeOrder(), since the user
-    // may confirm well after the signal fired (session could have changed).
+    // against the actual send-time clock in executeOrder(), since a moment
+    // may pass between the signal arriving and the order actually going out.
     marketType: event.marketType,
     priceType: event.priceType,
     timeInForce: event.timeInForce,
     limitPrice: event.limitPrice,
-    orderAllowed: event.orderAllowed,
-    orderNote: event.orderNote,
     message: event.message,
     triggeredAt: event.triggeredAt,
-  });
+  };
 
-  console.log(`[待確認] ${order.signal} ${order.symbol} x${order.quantity} @ ${order.price} — ${order.message}`);
+  console.log(`[自動下單] ${order.signal} ${order.symbol} x${order.quantity} @ ${order.price} — ${order.message}`);
+  executeOrder(order).catch((err) => {
+    // executeOrder() already logged/reported the failure to the activity log —
+    // this is just so a rejected promise here doesn't become an unhandled rejection.
+    console.error(`[自動下單失敗] ${order.signal} ${order.symbol}:`, err instanceof Error ? err.message : err);
+  });
 }
 
 /**
@@ -85,7 +100,7 @@ function handleSignal(event: SignalEvent): void {
  * latency to order placement. Returns 0 (and the caller treats that as "can't
  * place this order") when there's no snapshot yet or nothing to sell/spend.
  */
-function resolveQuantity(order: PendingOrder): number {
+function resolveQuantity(order: TradeOrder): number {
   if (order.quantity !== 'ALL') return order.quantity;
 
   const account = getCachedAccount();
@@ -102,8 +117,8 @@ function resolveQuantity(order: PendingOrder): number {
   return Math.max(0, lots * 1000);
 }
 
-/** Actually places the order with Fubon after the user confirms a pending order in the UI. */
-async function executeOrder(order: PendingOrder): Promise<void> {
+/** Places the order with Fubon immediately on a BUY/SELL signal — no user confirmation step. */
+async function executeOrder(order: TradeOrder): Promise<void> {
   const s = session;
   if (!s) throw new Error('尚未連線');
 
@@ -127,8 +142,9 @@ async function executeOrder(order: PendingOrder): Promise<void> {
   }
 
   // Always recomputed fresh against the current wall-clock time, not reused from
-  // the (possibly stale) preview on `order` — the user may confirm well after
-  // the signal fired, and the trading session can change in between.
+  // the (possibly stale) preview on `order` — a moment can pass between the
+  // signal firing and this actually running, and the trading session (market
+  // open/closed, etc.) can change in between.
   const routing = resolveOrderRouting(quantity, Math.floor(Date.now() / 1000), order.price, {
     priceType: order.priceType ?? undefined,
     timeInForce: order.timeInForce ?? undefined,
@@ -196,26 +212,6 @@ async function executeOrder(order: PendingOrder): Promise<void> {
   }
 }
 
-/** Records a user-declined signal as a REJECTED activity — no order is ever sent to Fubon, so no latency is recorded. */
-async function recordRejection(order: PendingOrder): Promise<void> {
-  const s = session;
-  const source = s?.simulate ? 'SIMULATION' : 'LIVE';
-  // Best-effort resolution just for display — a rejected 'ALL' order was never
-  // actually sized against Fubon, so this may read 0 if no account snapshot exists yet.
-  const quantity = resolveQuantity(order);
-  appendLocalActivity({
-    symbol: order.symbol, side: order.signal, quantity, status: 'REJECTED',
-    orderId: null, message: order.message, source, ruleName: order.ruleName,
-    latencyMs: null, createdAt: new Date().toISOString(),
-  });
-  if (s) {
-    await reportActivity(SERVER_URL, s.token, {
-      ruleId: order.ruleId, ruleName: order.ruleName, symbol: order.symbol, side: order.signal,
-      quantity, price: order.price, status: 'REJECTED', message: order.message, source,
-    });
-  }
-}
-
 async function disconnectSession(): Promise<void> {
   if (!session) return;
   const { socket, fubon } = session;
@@ -224,6 +220,15 @@ async function disconnectSession(): Promise<void> {
   socket.disconnect();
   try {
     await fubon.logout();
+  } catch (err) {
+    // Once the Fubon SDK's internal state is poisoned (see the panic-recovery
+    // notes in python/fubon_bridge.py and account-sync.ts), even logout()
+    // can reject — that's not fatal here, we're tearing the session down
+    // either way, so just log it instead of letting it propagate as an
+    // unhandled rejection (which would crash the whole process; neither
+    // caller of disconnectSession() — the /api/disconnect route nor the
+    // SIGINT/SIGTERM shutdown handler — catches rejections from it).
+    console.warn('[Fubon] 登出失敗（將直接關閉連線）:', err instanceof Error ? err.message : err);
   } finally {
     fubon.shutdown();
   }
@@ -231,7 +236,9 @@ async function disconnectSession(): Promise<void> {
 
 interface ConnectBody {
   aiUsername: string;
-  aiPassword: string;
+  // Optional: omitted (or blank) to reuse a previously-saved AI股探 session
+  // (see config.ts's aiToken) instead of logging in fresh — see /api/connect.
+  aiPassword?: string;
   simulate: boolean;
   // All omitted by the UI when simulate is checked — the bundled test account is used instead.
   fubonId?: string;
@@ -264,36 +271,26 @@ app.get('/api/status', (_req, res) => {
 
 app.get('/api/defaults', (_req, res) => {
   const saved = loadConfig();
-  res.json({ fubonId: saved.fubonId ?? '', fubonCertPath: saved.fubonCertPath ?? '' });
+  res.json({
+    fubonId: saved.fubonId ?? '',
+    fubonCertPath: saved.fubonCertPath ?? '',
+    aiUsername: saved.aiUsername ?? '',
+    // Whether a saved AI股探 session *might* be reusable — not yet verified
+    // (that happens at /api/connect time). The UI uses this to skip asking
+    // for AI股探 credentials entirely and log in with it automatically.
+    hasSavedSession: !!(saved.aiUsername && saved.aiToken),
+  });
+});
+
+// "Switch account" escape hatch — forgets the saved AI股探 session so the UI
+// falls back to asking for fresh AI股探 credentials next time.
+app.post('/api/forget-session', (_req, res) => {
+  clearSavedSession();
+  res.json({ ok: true });
 });
 
 app.get('/api/activity', (_req, res) => {
   res.json(readRecentLocalActivity(50).reverse());
-});
-
-app.get('/api/pending-orders', (_req, res) => {
-  res.json(listPendingOrders());
-});
-
-app.post('/api/pending-orders/:id/confirm', async (req, res) => {
-  const order = takePendingOrder(req.params.id);
-  if (!order) { res.status(404).json({ error: '此訂單已不存在（可能已被處理或已過期）' }); return; }
-
-  try {
-    await executeOrder(order);
-    res.json({ ok: true });
-  } catch (err) {
-    // executeOrder already logged/reported the failure — just surface it to the UI.
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-app.post('/api/pending-orders/:id/reject', async (req, res) => {
-  const order = takePendingOrder(req.params.id);
-  if (!order) { res.status(404).json({ error: '此訂單已不存在（可能已被處理或已過期）' }); return; }
-
-  await recordRejection(order);
-  res.json({ ok: true });
 });
 
 app.post('/api/connect', async (req, res) => {
@@ -303,8 +300,8 @@ app.post('/api/connect', async (req, res) => {
   }
 
   const body = req.body as ConnectBody;
-  if (!body.aiUsername || !body.aiPassword) {
-    res.status(400).json({ error: '請輸入 AI股探 帳號與密碼' });
+  if (!body.aiUsername) {
+    res.status(400).json({ error: '請輸入 AI股探 帳號' });
     return;
   }
 
@@ -323,11 +320,24 @@ app.post('/api/connect', async (req, res) => {
     return;
   }
 
+  // Session persistence: a blank password means "reuse the saved AI股探
+  // session" (see config.ts's aiToken) instead of logging in fresh — so a
+  // trading-app restart doesn't force retyping the AI股探 password every
+  // time. The saved token is re-verified here (not just trusted) since it
+  // may have expired (7-day lifetime) or been for a different account.
   let token: string;
-  try {
-    token = await loginToServer(SERVER_URL, body.aiUsername, body.aiPassword);
-  } catch {
-    res.status(400).json({ error: 'AI股探 登入失敗，請確認帳號密碼是否正確' });
+  const saved = loadConfig();
+  if (body.aiPassword) {
+    try {
+      token = await loginToServer(SERVER_URL, body.aiUsername, body.aiPassword);
+    } catch {
+      res.status(400).json({ error: 'AI股探 登入失敗，請確認帳號密碼是否正確' });
+      return;
+    }
+  } else if (saved.aiUsername === body.aiUsername && saved.aiToken && (await verifyToken(SERVER_URL, saved.aiToken))) {
+    token = saved.aiToken;
+  } else {
+    res.status(400).json({ error: '沒有可用的已儲存登入狀態（已過期或尚未登入過），請輸入 AI股探 密碼' });
     return;
   }
 
@@ -344,8 +354,11 @@ app.post('/api/connect', async (req, res) => {
   }
 
   // Only cache the real cert path for next time — the test cert is always
-  // re-derived from TEST_CERT_PATH, never worth persisting.
+  // re-derived from TEST_CERT_PATH, never worth persisting. The AI股探
+  // session (username + token) is always cached so the next restart can
+  // skip AI股探 login regardless of simulate mode.
   if (!body.simulate) saveConfig({ fubonId, fubonCertPath });
+  saveConfig({ aiUsername: body.aiUsername, aiToken: token });
 
   const socket = connectSignalListener(SERVER_URL, token, handleSignal, (status, detail) => {
     if (session) { session.socketStatus = status; session.socketDetail = detail; }

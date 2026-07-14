@@ -1,4 +1,5 @@
 import type { RuleConfig, RuleResult, TickData, OHLCVBar, Condition } from '../types/rule';
+import { SIGNAL_LABEL } from '@stock-notifier/shared';
 import * as indicators from './indicators';
 import { runRuleCode } from './sandbox';
 import type { DataContext } from './data-context';
@@ -143,35 +144,35 @@ export class RuleEngine {
     const conditionDescriptions = (config.conditions ?? []).map((c: Condition) => {
       switch (c.type) {
         case 'PRICE_ABOVE_MA':
-          return `Price above MA${c.params.period}`;
+          return `價格高於 MA${c.params.period}`;
         case 'PRICE_BELOW_MA':
-          return `Price below MA${c.params.period}`;
+          return `價格低於 MA${c.params.period}`;
         case 'MA_CROSS_ABOVE':
-          return `MA${c.params.shortPeriod} crossed above MA${c.params.longPeriod}`;
+          return `MA${c.params.shortPeriod} 向上穿越 MA${c.params.longPeriod}`;
         case 'MA_CROSS_BELOW':
-          return `MA${c.params.shortPeriod} crossed below MA${c.params.longPeriod}`;
+          return `MA${c.params.shortPeriod} 向下穿越 MA${c.params.longPeriod}`;
         case 'RSI_OVERSOLD':
-          return `RSI(${c.params.period || 14}) < ${c.params.threshold || 30}`;
+          return `RSI(${c.params.period || 14}) 低於 ${c.params.threshold || 30}`;
         case 'RSI_OVERBOUGHT':
-          return `RSI(${c.params.period || 14}) > ${c.params.threshold || 70}`;
+          return `RSI(${c.params.period || 14}) 高於 ${c.params.threshold || 70}`;
         case 'VOLUME_SPIKE':
-          return `Volume spike (${c.params.multiplier || 2}x avg)`;
+          return `成交量暴增（平均的 ${c.params.multiplier || 2} 倍）`;
         case 'PRICE_BREAK_HIGH':
-          return `${c.params.period}-day high breakout`;
+          return `突破 ${c.params.period} 日新高`;
         case 'PRICE_BREAK_LOW':
-          return `${c.params.period}-day low breakdown`;
+          return `跌破 ${c.params.period} 日新低`;
         case 'BOLLINGER_BREAK_UPPER':
-          return 'Price above upper Bollinger Band';
+          return '價格突破布林通道上軌';
         case 'BOLLINGER_BREAK_LOWER':
-          return 'Price below lower Bollinger Band';
+          return '價格跌破布林通道下軌';
         default:
           return c.type;
       }
     });
 
     return (
-      `${config.signal} signal for ${tick.symbol} at ${tick.price}: ` +
-      conditionDescriptions.join(config.logic === 'AND' ? ' AND ' : ' OR ')
+      `${tick.symbol} ${SIGNAL_LABEL[config.signal]}訊號（價格 ${tick.price}）：` +
+      conditionDescriptions.join(config.logic === 'AND' ? '，且 ' : '，或 ')
     );
   }
 }

@@ -57,6 +57,9 @@ export type ActionType = 'notify' | 'trade';
 /** Signals a rule may emit. NOTIFY is an alert-only signal (no trade direction). */
 export type Signal = 'BUY' | 'SELL' | 'NOTIFY';
 
+/** Chinese label for a signal, used in notification text (email/LINE/Discord) sent to users. */
+export const SIGNAL_LABEL: Record<Signal, string> = { BUY: '買進', SELL: '賣出', NOTIFY: '通知' };
+
 /**
  * A rule's evaluation logic. Two formats are supported:
  *

@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import axios from 'axios';
+import { SIGNAL_LABEL, type Signal } from '@stock-notifier/shared';
 
 export interface NotificationPayload {
   title: string;
@@ -7,6 +8,11 @@ export interface NotificationPayload {
   symbol?: string;
   signal?: string;
   price?: number;
+}
+
+/** Chinese label for a signal (falls back to the raw value for anything outside BUY/SELL/NOTIFY). */
+function signalLabel(signal?: string): string | undefined {
+  return signal && signal in SIGNAL_LABEL ? SIGNAL_LABEL[signal as Signal] : signal;
 }
 
 export class NotificationService {
@@ -31,7 +37,7 @@ export class NotificationService {
     await transporter.sendMail({
       from: process.env.EMAIL_FROM || process.env.SMTP_USER,
       to,
-      subject: `[Stock Alert] ${payload.title}`,
+      subject: `【AI股探】${payload.title}`,
       html: this.buildEmailHtml(payload),
     });
 
@@ -140,9 +146,9 @@ export class NotificationService {
             description: payload.message,
             color,
             fields: [
-              ...(payload.symbol ? [{ name: 'Symbol', value: payload.symbol, inline: true }] : []),
-              ...(payload.signal ? [{ name: 'Signal', value: payload.signal, inline: true }] : []),
-              ...(payload.price ? [{ name: 'Price', value: `$${payload.price}`, inline: true }] : []),
+              ...(payload.symbol ? [{ name: '股票代號', value: payload.symbol, inline: true }] : []),
+              ...(payload.signal ? [{ name: '信號', value: signalLabel(payload.signal)!, inline: true }] : []),
+              ...(payload.price ? [{ name: '價格', value: `$${payload.price}`, inline: true }] : []),
             ],
             timestamp: new Date().toISOString(),
           },
@@ -220,12 +226,12 @@ export class NotificationService {
         ${this.buildEmailHeader()}
         <div style="background: #f8fafc; padding: 20px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0;">
           <h3 style="color: #1e293b;">${payload.title}</h3>
-          ${payload.symbol ? `<p><strong>Symbol:</strong> ${payload.symbol}</p>` : ''}
-          ${payload.signal ? `<p><strong>Signal:</strong> <span style="color: ${signalColor}; font-weight: bold;">${payload.signal}</span></p>` : ''}
-          ${payload.price ? `<p><strong>Price:</strong> ${payload.price}</p>` : ''}
+          ${payload.symbol ? `<p><strong>股票代號：</strong>${payload.symbol}</p>` : ''}
+          ${payload.signal ? `<p><strong>信號：</strong><span style="color: ${signalColor}; font-weight: bold;">${signalLabel(payload.signal)}</span></p>` : ''}
+          ${payload.price ? `<p><strong>價格：</strong>${payload.price}</p>` : ''}
           <p style="color: #64748b;">${payload.message}</p>
           <hr style="border-color: #e2e8f0;">
-          <p style="font-size: 12px; color: #94a3b8;">Sent by AI股探</p>
+          <p style="font-size: 12px; color: #94a3b8;">由 AI股探 發送</p>
         </div>
       </div>
     `;

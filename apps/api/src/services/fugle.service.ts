@@ -13,7 +13,15 @@ const REST_POLL_INTERVAL_MS = 15000;
 // name the symbol it rejected, so subscribing one at a time — with a pause
 // to let a rejection arrive — is what makes "the symbol currently pending"
 // an unambiguous, reliable way to attribute that error.
-const SUBSCRIBE_SETTLE_MS = 400;
+//
+// Empirically 400ms was too short: real rejections were observed to arrive
+// well after this window closed, so every symbol got optimistically marked
+// "subscribed" (and processQueue had already exited) before its actual
+// rejection showed up — the error got logged but nothing was left listening
+// for it, and every symbol silently believed it had a working WS
+// subscription it didn't. 3s trades slower startup subscribing for actually
+// catching the rejection while something is still watching for it.
+const SUBSCRIBE_SETTLE_MS = 3000;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -82,11 +90,16 @@ export class FugleService extends EventEmitter {
 
           // Log any error event from Fugle, and flag it if it's the real-time
           // subscription limit — processQueue() attributes it to whichever
-          // symbol it's currently waiting on (see SUBSCRIBE_SETTLE_MS).
+          // symbol it's currently waiting on (see SUBSCRIBE_SETTLE_MS). Also
+          // set wsLimitReached directly and unconditionally: a limit error
+          // means the cap is hit *now*, regardless of whether it arrived late
+          // (after processQueue already moved past the symbol it belonged
+          // to) — future subscribe() calls should stop retrying WS either way.
           if (parsed.event === 'error' || parsed.type === 'error') {
             console.error('[Fugle] Server error event:', JSON.stringify(parsed));
             if (this.isSubscriptionLimitError(parsed)) {
               this.pendingLimitError = true;
+              this.wsLimitReached = true;
             }
             return;
           }

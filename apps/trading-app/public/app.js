@@ -20,6 +20,12 @@ const simulateCheckbox = $('simulate');
 const connectBtn = $('connectBtn');
 const disconnectBtn = $('disconnectBtn');
 const fubonFields = $('fubonFields');
+const aiAutoLogin = $('aiAutoLogin');
+const aiManualLogin = $('aiManualLogin');
+
+// Non-null once a saved, reusable AI股探 session is known (from /api/defaults)
+// — the form then never asks for AI股探 credentials again.
+let savedSession = null;
 
 // Simulation mode uses a bundled test account/certificate — the server
 // derives it entirely on its own, so none of these fields are needed or shown.
@@ -76,11 +82,46 @@ async function loadStatus() {
   return status;
 }
 
-async function loadDefaults() {
+function showAutoLoginUI() {
+  aiAutoLogin.classList.remove('hidden');
+  aiManualLogin.classList.add('hidden');
+  $('aiSavedUsername').textContent = savedSession.aiUsername;
+}
+
+function showManualLoginUI() {
+  savedSession = null;
+  aiAutoLogin.classList.add('hidden');
+  aiManualLogin.classList.remove('hidden');
+}
+
+$('aiSwitchAccountBtn').addEventListener('click', async () => {
+  await fetch('/api/forget-session', { method: 'POST' });
+  showManualLoginUI();
+});
+
+/**
+ * A saved AI股探 session means the form never asks for AI股探 credentials —
+ * it's applied automatically. In simulate mode that's *everything* needed
+ * (Fubon fields are auto-derived too), so the connection is started with no
+ * click at all. For real trading, Fubon fields are never persisted (see
+ * config.ts), so the user still fills those in and clicks connect — but the
+ * AI股探 half stays automatic.
+ */
+async function loadDefaults(alreadyConnected) {
   const res = await fetch('/api/defaults');
   const defaults = await res.json();
   if (defaults.fubonId) $('fubonId').value = defaults.fubonId;
   if (defaults.fubonCertPath) $('fubonCertPath').value = defaults.fubonCertPath;
+
+  if (defaults.hasSavedSession && defaults.aiUsername) {
+    savedSession = { aiUsername: defaults.aiUsername };
+    showAutoLoginUI();
+    if (!alreadyConnected && simulateCheckbox.checked) {
+      attemptConnect(savedSession.aiUsername, '', true, {});
+    }
+  } else {
+    showManualLoginUI();
+  }
 }
 
 /** Formats a latency in ms as e.g. "1.2s" or "850ms"; "—" when unknown (e.g. rejected orders). */
@@ -138,99 +179,12 @@ async function loadActivity() {
   }
 }
 
-const pendingSection = $('pendingSection');
-const pendingList = $('pendingList');
-// Tracks buttons currently mid-request so a slow response can't be double-clicked.
-const pendingInFlight = new Set();
-
-async function respondToPendingOrder(id, action) {
-  if (pendingInFlight.has(id)) return;
-  pendingInFlight.add(id);
-  try {
-    const res = await fetch(`/api/pending-orders/${id}/${action}`, { method: 'POST' });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      alert(data.error || (action === 'confirm' ? '下單失敗' : '操作失敗'));
-    }
-  } catch {
-    alert('連線失敗，請確認程式是否仍在執行');
-  } finally {
-    pendingInFlight.delete(id);
-    loadPendingOrders();
-    loadActivity();
-  }
-}
-
-async function loadPendingOrders() {
-  const res = await fetch('/api/pending-orders');
-  const orders = await res.json();
-
-  pendingSection.classList.toggle('hidden', orders.length === 0);
-  pendingList.innerHTML = '';
-
-  for (const o of orders) {
-    // orderAllowed is only ever a firm rejection for a concrete (non-'ALL')
-    // quantity — 'ALL' orders show routing as unresolved ("—") until confirmed,
-    // since the real quantity (and therefore market segment) isn't known yet.
-    const blocked = o.orderAllowed === false;
-    const card = document.createElement('div');
-    card.className = 'pending-card';
-    card.innerHTML = `
-      <div class="pending-top">
-        <span class="pulse"></span>
-        <span class="${o.signal === 'BUY' ? 'side-buy' : 'side-sell'}">${o.signal}</span>
-        <span>${o.symbol}</span>
-        <span>x${o.quantity === 'ALL' ? '全部' : o.quantity}</span>
-        <span>@ ${o.price}</span>
-        <span>${formatRouting(o.marketType, o.priceType, o.timeInForce, o.limitPrice)}</span>
-        <span style="margin-left:auto;color:var(--muted);font-size:0.75rem">${o.ruleName || ''}</span>
-      </div>
-      <p class="pending-message">${o.message}</p>
-      ${blocked ? `<p class="pending-warning">⚠ ${o.orderNote || '目前無法送出委託'}</p>` : ''}
-      <div class="pending-actions">
-        <button class="btn-confirm" data-action="confirm" ${blocked ? 'disabled title="目前非有效交易時段，無法下單"' : ''}>確認下單</button>
-        <button class="btn-reject" data-action="reject">拒絕</button>
-      </div>
-    `;
-    if (!blocked) {
-      card.querySelector('[data-action="confirm"]').addEventListener('click', () => respondToPendingOrder(o.id, 'confirm'));
-    }
-    card.querySelector('[data-action="reject"]').addEventListener('click', () => respondToPendingOrder(o.id, 'reject'));
-    pendingList.appendChild(card);
-  }
-}
-
-loginForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-
-  // Manual validation (the form has novalidate) so an incomplete form always
-  // produces a visible, immediate reaction — native browser validation can
-  // silently block the submit event with an easy-to-miss tooltip instead.
-  const aiUsername = $('aiUsername').value.trim();
-  const aiPassword = $('aiPassword').value;
-  const simulate = simulateCheckbox.checked;
-
-  if (!aiUsername || !aiPassword) {
-    showError('請輸入 AI股探 帳號與密碼');
-    return;
-  }
-
-  let fubonBody = {};
-  if (!simulate) {
-    const fubonId = $('fubonId').value.trim();
-    const fubonPassword = $('fubonPassword').value;
-    const fubonCertPath = $('fubonCertPath').value.trim();
-    const fubonCertPassword = $('fubonCertPassword').value;
-    if (!fubonId || !fubonPassword || !fubonCertPath || !fubonCertPassword) {
-      showError('請完整輸入富邦帳號、密碼、憑證路徑與憑證密碼（或改用模擬交易環境）');
-      return;
-    }
-    fubonBody = { fubonId, fubonPassword, fubonCertPath, fubonCertPassword };
-  }
-
-  // Everything below happens synchronously before the network call — so the
-  // click always produces an immediate, visible reaction no matter how long
-  // /api/connect ends up taking (real Fubon login can take several seconds).
+/** Shared by the manual submit handler and loadDefaults()'s automatic-login path. */
+async function attemptConnect(aiUsername, aiPassword, simulate, fubonBody) {
+  // Everything below happens synchronously before the network call — so a
+  // manual click always produces an immediate, visible reaction no matter
+  // how long /api/connect ends up taking (real Fubon login can take several
+  // seconds); for the automatic path this is just the initial state.
   showConnecting();
   connectBtn.disabled = true;
   connectBtn.textContent = '連線中…';
@@ -262,6 +216,39 @@ loginForm.addEventListener('submit', async (e) => {
     connectBtn.textContent = '連線並開始監聽訊號';
     loginForm.classList.remove('form-loading');
   }
+}
+
+loginForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+
+  // Manual validation (the form has novalidate) so an incomplete form always
+  // produces a visible, immediate reaction — native browser validation can
+  // silently block the submit event with an easy-to-miss tooltip instead.
+  const aiUsername = savedSession ? savedSession.aiUsername : $('aiUsername').value.trim();
+  // Blank when reusing a saved session — server.ts treats it as "reuse the
+  // saved session" and returns a clear error if there isn't one (or it expired).
+  const aiPassword = savedSession ? '' : $('aiPassword').value;
+  const simulate = simulateCheckbox.checked;
+
+  if (!aiUsername) {
+    showError('請輸入 AI股探 帳號');
+    return;
+  }
+
+  let fubonBody = {};
+  if (!simulate) {
+    const fubonId = $('fubonId').value.trim();
+    const fubonPassword = $('fubonPassword').value;
+    const fubonCertPath = $('fubonCertPath').value.trim();
+    const fubonCertPassword = $('fubonCertPassword').value;
+    if (!fubonId || !fubonPassword || !fubonCertPath || !fubonCertPassword) {
+      showError('請完整輸入富邦帳號、密碼、憑證路徑與憑證密碼（或改用模擬交易環境）');
+      return;
+    }
+    fubonBody = { fubonId, fubonPassword, fubonCertPath, fubonCertPassword };
+  }
+
+  attemptConnect(aiUsername, aiPassword, simulate, fubonBody);
 });
 
 disconnectBtn.addEventListener('click', async () => {
@@ -274,10 +261,11 @@ disconnectBtn.addEventListener('click', async () => {
   }
 });
 
-loadStatus();
-loadDefaults();
+// loadDefaults() needs to know up front whether a session is already
+// connected (e.g. the trading-app process was already running and this is
+// just a browser refresh) — otherwise it could fire an automatic-login
+// attempt on top of an already-active connection.
+loadStatus().then((status) => loadDefaults(status.connected));
 loadActivity();
-loadPendingOrders();
 setInterval(loadActivity, 3000);
 setInterval(loadStatus, 2000); // fast enough to show the socket handshake resolving promptly
-setInterval(loadPendingOrders, 2000); // time-sensitive — poll faster than activity

@@ -44,7 +44,8 @@ h2 { font-size: 1rem; margin: 32px 0 12px; color: var(--muted); }
 .field label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; }
 .field input[type="text"],
 .field input:not([type]),
-.field input[type="password"] {
+.field input[type="password"],
+.field input[type="email"] {
   width: 100%;
   padding: 8px 10px;
   border-radius: 8px;
@@ -99,6 +100,10 @@ form.form-loading { opacity: 0.7; pointer-events: none; }
 .status-pill-ok { color: var(--emerald); background: rgba(52,211,153,0.1); border-color: rgba(52,211,153,0.3); }
 .status-pill-warn { color: var(--amber); background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.3); animation: pulse 1.4s ease-in-out infinite; }
 .status-pill-error { color: var(--red); background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.3); }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
 
 #connectStatus { margin: 12px 0 0; }
 
@@ -122,26 +127,3 @@ th { color: var(--muted); font-weight: 500; }
 .status-rejected { color: var(--muted); background: rgba(148,163,184,0.1); border-color: rgba(148,163,184,0.3); }
 
 .source-sim { color: var(--purple); }
-
-.pending-card {
-  background: var(--card);
-  border: 1px solid rgba(251, 191, 36, 0.4);
-  border-radius: 12px;
-  padding: 14px 16px;
-  margin-bottom: 10px;
-}
-.pending-card .pending-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
-.pending-card .pulse {
-  width: 8px; height: 8px; border-radius: 50%; background: var(--amber);
-  animation: pulse 1.4s ease-in-out infinite;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
-.pending-card .pending-message { color: var(--muted); font-size: 0.85rem; margin: 4px 0 12px; }
-.pending-card .pending-warning { color: var(--amber); font-size: 0.8rem; margin: 0 0 12px; }
-.pending-card .pending-actions { display: flex; gap: 8px; }
-.pending-card .pending-actions button { width: auto; flex: 1; }
-.btn-confirm { background: var(--emerald) !important; color: #04331f !important; }
-.btn-reject { background: transparent !important; border: 1px solid var(--red) !important; color: var(--red) !important; }
