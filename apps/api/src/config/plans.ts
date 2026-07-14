@@ -33,6 +33,16 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
     canUseDynamicPool: true,
     features: ['每天最多建立 15 個 AI 規則', '每天最多 150 次對話輸入', '可下載獨立交易應用程式', '可使用動態選股池'],
   },
+  UNLIMITED: {
+    id: 'UNLIMITED',
+    name: '無限方案',
+    price: 0,
+    dailyRuleLimit: null,
+    dailyChatLimit: null,
+    canDownloadTradingApp: true,
+    canUseDynamicPool: true,
+    features: ['無限建立 AI 規則', '無限次對話輸入', '可下載獨立交易應用程式', '可使用動態選股池'],
+  },
 };
 
 export function getPlan(planId: string): PlanDefinition {
@@ -40,5 +50,5 @@ export function getPlan(planId: string): PlanDefinition {
 }
 
 export function isValidPlanId(planId: string): planId is PlanId {
-  return planId === 'FREE' || planId === 'PLAN_399' || planId === 'PLAN_799';
+  return planId === 'FREE' || planId === 'PLAN_399' || planId === 'PLAN_799' || planId === 'UNLIMITED';
 }

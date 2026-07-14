@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { requireAuth, signToken } from '../middleware/auth';
 import { NotificationService } from '../services/notification.service';
 import { EMAIL_REGEX, issueVerification } from '../services/email-verification';
+import { issuePasswordReset } from '../services/password-reset';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -139,6 +140,66 @@ router.post('/resend-verification', async (req: Request, res: Response, next: Ne
     }
 
     res.json({ message: '若此 Email 已註冊且尚未驗證，驗證信將重新寄出。' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/auth/forgot-password — always responds generically (doesn't reveal whether the email exists).
+router.post('/forgot-password', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { email } = req.body as { email?: string };
+    if (!email) {
+      res.status(400).json({ error: '請輸入 Email' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (user) {
+      await issuePasswordReset(prisma, notifier, user.id, email);
+    }
+
+    res.json({ message: '若此 Email 已註冊，重設密碼信將寄出，請至信箱查看。' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/auth/reset-password — sets a new password given a valid (unexpired) reset token.
+// Successfully resetting also marks the account verified — clicking a link sent
+// to the inbox is itself proof of mailbox ownership, same guarantee email
+// verification provides, so this unblocks login for an account that registered
+// but never verified (e.g. if the original verification email never arrived).
+router.post('/reset-password', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { token, newPassword } = req.body as { token?: string; newPassword?: string };
+    if (!token || !newPassword) {
+      res.status(400).json({ error: '請輸入新密碼' });
+      return;
+    }
+    if (newPassword.length < 6) {
+      res.status(400).json({ error: '密碼至少需要 6 個字元' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { passwordResetToken: token } });
+    if (!user || !user.passwordResetTokenExpiry || user.passwordResetTokenExpiry < new Date()) {
+      res.status(400).json({ error: '重設連結無效或已過期，請重新申請' });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        passwordResetToken: null,
+        passwordResetTokenExpiry: null,
+        emailVerified: true,
+      },
+    });
+
+    res.json({ ok: true, message: '密碼已重設，請使用新密碼登入。' });
   } catch (err) {
     next(err);
   }

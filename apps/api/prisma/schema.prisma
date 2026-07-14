@@ -21,6 +21,8 @@ model User {
   emailVerified          Boolean   @default(false)
   emailVerifyToken       String?   @unique
   emailVerifyTokenExpiry DateTime?
+  passwordResetToken       String?   @unique
+  passwordResetTokenExpiry DateTime?
   lineUserId        String?
   lineBindCode      String?
   lineBindExpiry    DateTime?

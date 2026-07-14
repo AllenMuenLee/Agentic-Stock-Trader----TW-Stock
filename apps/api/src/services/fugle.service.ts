@@ -8,6 +8,21 @@ type FugleTickHandler = (tick: TickData) => void;
 // WebSocket (Fugle plan's real-time subscription cap reached).
 const REST_POLL_INTERVAL_MS = 15000;
 
+// How long to wait after sending one symbol's subscribe before assuming it
+// succeeded and moving on to the next. Fugle's limit-exceeded error doesn't
+// name the symbol it rejected, so subscribing one at a time — with a pause
+// to let a rejection arrive — is what makes "the symbol currently pending"
+// an unambiguous, reliable way to attribute that error.
+const SUBSCRIBE_SETTLE_MS = 400;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// 'aggregates' carries the OHLC/change/bid-ask fields handleFugleMessage()
+// parses; 'trades' adds tick-by-tick price/volume between aggregate updates.
+// ('quotes' is not a real Fugle channel — trying to subscribe to it was
+// silently rejected server-side, which was the previous bug.)
+const SUBSCRIBE_CHANNELS = ['aggregates', 'trades'] as const;
+
 export class FugleService extends EventEmitter {
   private apiKey: string;
   private subscribedSymbols: Set<string> = new Set();
@@ -18,12 +33,28 @@ export class FugleService extends EventEmitter {
   /** Symbols that exceeded the WebSocket subscription cap — polled via REST instead. */
   private restPolling: Map<string, NodeJS.Timeout> = new Map();
   /**
-   * Max concurrent Fugle WebSocket symbol subscriptions before new symbols fall
-   * back to REST polling. Env-configurable (FUGLE_WS_MAX_SYMBOLS) since the real
-   * cap is Fugle-plan-specific and not something this codebase can verify —
-   * tune it to your actual plan's limit.
+   * Symbols waiting to be sent to the WebSocket. subscribe() only enqueues —
+   * processQueue() drains it one symbol at a time (see SUBSCRIBE_SETTLE_MS)
+   * so a burst of subscribe() calls (e.g. resubscribing everything on
+   * startup) can't outrun Fugle's error responses.
    */
-  private wsMaxSymbols = Number(process.env.FUGLE_WS_MAX_SYMBOLS) || 20;
+  private subscribeQueue: string[] = [];
+  private queueProcessing = false;
+  /** Set (within the settle window) when a limit-exceeded error arrives for the symbol processQueue() is currently subscribing. */
+  private pendingLimitError = false;
+  /**
+   * Fugle's unsubscribe request needs the channel-subscription `id` it handed
+   * back in the `subscribed` event — NOT the channel/symbol pair — so this
+   * tracks `${symbol}:${channel}` → id for every channel we're subscribed to.
+   */
+  private subscriptionIds: Map<string, string> = new Map();
+  /**
+   * Set once Fugle actually reports the real-time subscription cap is
+   * exceeded — routes further subscribe() calls straight to REST polling
+   * without retrying the WebSocket. Cleared on the next unsubscribe(), since
+   * that frees a slot and it's worth trying the WebSocket again.
+   */
+  private wsLimitReached = false;
 
   constructor(apiKey: string) {
     super();
@@ -49,9 +80,28 @@ export class FugleService extends EventEmitter {
           const parsed = typeof msg === 'string' ? JSON.parse(msg) : msg as Record<string, unknown>;
           if (!parsed || typeof parsed !== 'object') return;
 
-          // Log any error event from Fugle (e.g. subscription limit exceeded)
+          // Log any error event from Fugle, and flag it if it's the real-time
+          // subscription limit — processQueue() attributes it to whichever
+          // symbol it's currently waiting on (see SUBSCRIBE_SETTLE_MS).
           if (parsed.event === 'error' || parsed.type === 'error') {
             console.error('[Fugle] Server error event:', JSON.stringify(parsed));
+            if (this.isSubscriptionLimitError(parsed)) {
+              this.pendingLimitError = true;
+            }
+            return;
+          }
+
+          // Record the channel-subscription id Fugle hands back so
+          // sendUnsubscribe() can reference it later — unsubscribe requests
+          // take this id, not the original channel/symbol pair.
+          if (parsed.event === 'subscribed') {
+            const data = parsed.data as Record<string, unknown> | undefined;
+            const id = data?.id;
+            const channel = data?.channel;
+            const symbol = data?.symbol;
+            if (typeof id === 'string' && typeof channel === 'string' && typeof symbol === 'string') {
+              this.subscriptionIds.set(`${symbol}:${channel}`, id);
+            }
             return;
           }
 
@@ -79,7 +129,7 @@ export class FugleService extends EventEmitter {
   }
 
   subscribe(symbol: string): void {
-    if (this.subscribedSymbols.has(symbol) || this.restPolling.has(symbol)) return;
+    if (this.subscribedSymbols.has(symbol) || this.restPolling.has(symbol) || this.subscribeQueue.includes(symbol)) return;
 
     // Simulation mode has no real WebSocket capacity to exceed — just track
     // membership for startSimulation()'s mock tick loop, same as before.
@@ -88,22 +138,16 @@ export class FugleService extends EventEmitter {
       return;
     }
 
-    if (this.subscribedSymbols.size >= this.wsMaxSymbols) {
+    if (this.wsLimitReached) {
       console.warn(
-        `[Fugle] WebSocket subscription cap (${this.wsMaxSymbols}) reached — falling back to REST polling (${REST_POLL_INTERVAL_MS / 1000}s) for ${symbol}`,
+        `[Fugle] WebSocket subscription limit previously exceeded — routing ${symbol} straight to REST polling (${REST_POLL_INTERVAL_MS / 1000}s)`,
       );
       this.startRestPolling(symbol);
       return;
     }
 
-    this.subscribedSymbols.add(symbol);
-    try {
-      const wsClient = this.client as any;
-      wsClient.stock.subscribe({ channel: 'quotes', symbol });
-      wsClient.stock.subscribe({ channel: 'trades', symbol });
-    } catch (e) {
-      console.error(`[Fugle] Failed to subscribe ${symbol}:`, e);
-    }
+    this.subscribeQueue.push(symbol);
+    this.processQueue().catch((e) => console.error('[Fugle] Subscribe queue error:', e));
   }
 
   unsubscribe(symbol: string): void {
@@ -113,17 +157,16 @@ export class FugleService extends EventEmitter {
       return;
     }
 
+    const queueIdx = this.subscribeQueue.indexOf(symbol);
+    if (queueIdx !== -1) this.subscribeQueue.splice(queueIdx, 1);
+
     if (!this.subscribedSymbols.has(symbol)) return;
     this.subscribedSymbols.delete(symbol);
     console.log(`[Fugle] Unsubscribed from ${symbol}. Current subscriptions: ${Array.from(this.subscribedSymbols).join(', ')}`);
     if (!this.client || this.isSimulation) return;
-    try {
-      const wsClient = this.client as any;
-      wsClient.stock.unsubscribe({ channel: 'quotes', symbol });
-      wsClient.stock.unsubscribe({ channel: 'trades', symbol });
-    } catch {
-      // ignore
-    }
+    // Freed a WebSocket slot — worth letting the next subscribe() try real-time again.
+    this.wsLimitReached = false;
+    this.sendUnsubscribe(symbol);
   }
 
   onTick(handler: FugleTickHandler): void {
@@ -171,6 +214,104 @@ export class FugleService extends EventEmitter {
     const timer = this.restPolling.get(symbol);
     if (timer) clearInterval(timer);
     this.restPolling.delete(symbol);
+  }
+
+  /**
+   * Matches Fugle's real-time subscription-limit error. Fugle's exact
+   * wording/code isn't pinned down in their SDK types, so this checks for
+   * "limit" alongside a term implying it was hit/exceeded rather than a
+   * specific code, to stay robust to minor message changes.
+   */
+  private isSubscriptionLimitError(parsed: Record<string, unknown>): boolean {
+    const data = parsed.data as Record<string, unknown> | undefined;
+    const message = String(data?.message ?? parsed.message ?? '').toLowerCase();
+    return message.includes('limit') && (message.includes('exceed') || message.includes('maximum') || message.includes('subscri'));
+  }
+
+  /** Sends a subscribe request for every channel in SUBSCRIBE_CHANNELS. */
+  private sendSubscribe(symbol: string): void {
+    const wsClient = this.client as any;
+    for (const channel of SUBSCRIBE_CHANNELS) {
+      wsClient.stock.subscribe({ channel, symbol });
+    }
+  }
+
+  /**
+   * Unsubscribes every channel we hold a recorded subscription id for on
+   * this symbol. Fugle's unsubscribe protocol takes `{ ids: [...] }`, not a
+   * channel/symbol pair — silently a no-op for channels that never
+   * registered a 'subscribed' response (e.g. one rejected by the limit).
+   */
+  private sendUnsubscribe(symbol: string): void {
+    const ids: string[] = [];
+    for (const channel of SUBSCRIBE_CHANNELS) {
+      const key = `${symbol}:${channel}`;
+      const id = this.subscriptionIds.get(key);
+      if (id) {
+        ids.push(id);
+        this.subscriptionIds.delete(key);
+      }
+    }
+    if (!ids.length) return;
+    try {
+      const wsClient = this.client as any;
+      wsClient.stock.unsubscribe({ ids });
+    } catch (e) {
+      console.error(`[Fugle] Failed to unsubscribe ${symbol}:`, e);
+    }
+  }
+
+  /**
+   * Drains subscribeQueue one symbol at a time. Each symbol is sent to the
+   * WebSocket, then we wait SUBSCRIBE_SETTLE_MS for pendingLimitError to be
+   * flipped by the message handler before deciding it succeeded — this is
+   * what keeps a burst of subscribe() calls (e.g. resubscribing everything
+   * on startup) from overrunning Fugle's real subscription cap before any
+   * error has a chance to come back.
+   */
+  private async processQueue(): Promise<void> {
+    if (this.queueProcessing) return;
+    this.queueProcessing = true;
+
+    try {
+      while (this.subscribeQueue.length) {
+        if (this.wsLimitReached) {
+          // Already know the cap is hit — no point probing the rest one by one.
+          const rest = this.subscribeQueue.splice(0);
+          for (const symbol of rest) this.startRestPolling(symbol);
+          break;
+        }
+
+        const symbol = this.subscribeQueue.shift()!;
+        if (this.subscribedSymbols.has(symbol) || this.restPolling.has(symbol)) continue;
+
+        this.pendingLimitError = false;
+        try {
+          this.sendSubscribe(symbol);
+        } catch (e) {
+          console.error(`[Fugle] Failed to subscribe ${symbol}:`, e);
+          continue;
+        }
+
+        await sleep(SUBSCRIBE_SETTLE_MS);
+
+        if (this.pendingLimitError) {
+          this.wsLimitReached = true;
+          // Whichever channels did register before the rejection (e.g.
+          // 'aggregates' succeeded, 'trades' didn't) still need cleanup;
+          // sendUnsubscribe() only sends ids we actually have on record.
+          this.sendUnsubscribe(symbol);
+          console.warn(
+            `[Fugle] Subscription limit exceeded — falling back to REST polling (${REST_POLL_INTERVAL_MS / 1000}s) for ${symbol}`,
+          );
+          this.startRestPolling(symbol);
+        } else {
+          this.subscribedSymbols.add(symbol);
+        }
+      }
+    } finally {
+      this.queueProcessing = false;
+    }
   }
 
   /** Converts a Fugle REST intraday quote response into the same TickData shape the WebSocket path emits. */

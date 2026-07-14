@@ -44,6 +44,14 @@ interface YFQuoteResult {
 }
 
 export class YFinanceService {
+  /**
+   * Per symbol:interval queue so overlapping seed calls (startup loop,
+   * SubscriptionManager's fire-and-forget seeding, refreshAllBars) can't
+   * interleave their delete+insert in fetchAndCacheIntradayToSQL and trip
+   * the (symbol, date, interval) unique constraint.
+   */
+  private inFlightFetches: Map<string, Promise<void>> = new Map();
+
   // ─── Public accessors ────────────────────────────────────────────────────────
 
   /**
@@ -661,7 +669,21 @@ export class YFinanceService {
   // ─── Private helpers ─────────────────────────────────────────────────────────
 
   /** Fetches intraday bars from Yahoo Finance and upserts them into SQL. */
-  private async fetchAndCacheIntradayToSQL(
+  private fetchAndCacheIntradayToSQL(
+    symbol: string,
+    interval: string,
+    days: number,
+  ): Promise<void> {
+    const key = `${symbol}:${interval}`;
+    const prior = this.inFlightFetches.get(key) ?? Promise.resolve();
+    const run = prior.then(() => this.doFetchAndCacheIntradayToSQL(symbol, interval, days));
+    // Chain future callers off this one even if it rejects — only the
+    // caller's own `run` promise should surface the error.
+    this.inFlightFetches.set(key, run.catch(() => {}));
+    return run;
+  }
+
+  private async doFetchAndCacheIntradayToSQL(
     symbol: string,
     interval: string,
     days: number,
@@ -669,17 +691,25 @@ export class YFinanceService {
     const bars = await this.getIntradayBars(symbol, interval, days);
     if (!bars.length) return;
 
-    const minDate = new Date(Math.min(...bars.map((b) => b.time)) * 1000);
-    const maxDate = new Date(Math.max(...bars.map((b) => b.time)) * 1000);
+    // Yahoo occasionally repeats a timestamp within one response — keep the
+    // last occurrence so createMany's own batch doesn't self-collide on the
+    // (symbol, date, interval) unique constraint.
+    const byTime = new Map<number, (typeof bars)[number]>();
+    for (const bar of bars) byTime.set(bar.time, bar);
+    const dedupedBars = [...byTime.values()];
+
+    const minDate = new Date(Math.min(...dedupedBars.map((b) => b.time)) * 1000);
+    const maxDate = new Date(Math.max(...dedupedBars.map((b) => b.time)) * 1000);
 
     // Two separate awaits instead of a single $transaction so SQLite releases
     // the write lock between the delete and the insert (shorter lock windows,
-    // no timeout under sequential seeding).
+    // no timeout under sequential seeding). Safe from cross-call interleaving
+    // because fetchAndCacheIntradayToSQL() serializes calls per symbol:interval.
     await prisma.stockPrice.deleteMany({
       where: { symbol, interval, date: { gte: minDate, lte: maxDate } },
     });
     await prisma.stockPrice.createMany({
-      data: bars.map((bar) => ({
+      data: dedupedBars.map((bar) => ({
         symbol,
         date: new Date(bar.time * 1000),
         interval,

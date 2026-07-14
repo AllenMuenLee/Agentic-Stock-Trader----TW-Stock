@@ -42,6 +42,10 @@ export const api = {
     fetchJson<{ ok: boolean; message: string }>('/auth/verify-email', { method: 'POST', body: JSON.stringify({ token }) }),
   resendVerification: (email: string) =>
     fetchJson<{ message: string }>('/auth/resend-verification', { method: 'POST', body: JSON.stringify({ email }) }),
+  forgotPassword: (email: string) =>
+    fetchJson<{ message: string }>('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }),
+  resetPassword: (token: string, newPassword: string) =>
+    fetchJson<{ ok: boolean; message: string }>('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, newPassword }) }),
 
   // Chat
   getChatSessions: () => fetchJson<{

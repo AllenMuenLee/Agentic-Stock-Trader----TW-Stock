@@ -261,7 +261,7 @@ export interface TradeActivityDto {
 
 // ─── Subscription Plans ──────────────────────────────────────────────────────
 
-export type PlanId = 'FREE' | 'PLAN_399' | 'PLAN_799';
+export type PlanId = 'FREE' | 'PLAN_399' | 'PLAN_799' | 'UNLIMITED';
 
 export interface PlanDefinition {
   id: PlanId;

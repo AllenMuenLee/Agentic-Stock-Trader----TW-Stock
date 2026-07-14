@@ -56,6 +56,24 @@ export class NotificationService {
     console.log(`[Notification] Verification email sent to ${to}`);
   }
 
+  /** Sends the password-reset email with a link back to the frontend's /reset-password page. */
+  async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
+    const transporter = this.getTransporter();
+    if (!transporter) {
+      console.warn('[Notification] Email not configured — cannot send password reset email');
+      return;
+    }
+
+    await transporter.sendMail({
+      from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+      to,
+      subject: '重設您的 AI股探 密碼',
+      html: this.buildPasswordResetEmailHtml(resetUrl),
+    });
+
+    console.log(`[Notification] Password reset email sent to ${to}`);
+  }
+
   async sendLine(lineUserId: string, payload: NotificationPayload): Promise<void> {
     const { LINE_CHANNEL_ACCESS_TOKEN } = process.env;
 
@@ -136,12 +154,25 @@ export class NotificationService {
     console.log(`[Notification] Discord DM sent to user ${discordUserId}`);
   }
 
+  /** Logo + brand header shared by every email template — table-based for compatibility with clients (e.g. Outlook) that don't support flexbox. */
+  private buildEmailHeader(): string {
+    const logoUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/Logo.png`;
+    return `
+      <table role="presentation" style="width: 100%; background: #1e293b; border-radius: 8px 8px 0 0;">
+        <tr>
+          <td style="padding: 16px 20px;">
+            <img src="${logoUrl}" alt="AI股探" width="28" height="28" style="border-radius: 6px; vertical-align: middle;" />
+            <span style="color: white; font-size: 20px; font-weight: bold; vertical-align: middle; margin-left: 10px;">AI股探</span>
+          </td>
+        </tr>
+      </table>
+    `;
+  }
+
   private buildVerificationEmailHtml(verifyUrl: string): string {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <div style="background: #1e293b; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-          <h2 style="margin: 0;">📊 AI股探</h2>
-        </div>
+        ${this.buildEmailHeader()}
         <div style="background: #f8fafc; padding: 20px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0;">
           <h3 style="color: #1e293b;">請驗證您的帳號</h3>
           <p style="color: #475569;">感謝您註冊 AI股探！請點擊下方按鈕完成 Email 驗證，即可開始使用。</p>
@@ -159,15 +190,34 @@ export class NotificationService {
     `;
   }
 
+  private buildPasswordResetEmailHtml(resetUrl: string): string {
+    return `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        ${this.buildEmailHeader()}
+        <div style="background: #f8fafc; padding: 20px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0;">
+          <h3 style="color: #1e293b;">重設您的密碼</h3>
+          <p style="color: #475569;">我們收到您重設 AI股探 帳號密碼的請求。請點擊下方按鈕設定新密碼。</p>
+          <p style="text-align: center; margin: 24px 0;">
+            <a href="${resetUrl}" style="background: #0ea5e9; color: white; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: bold;">重設密碼</a>
+          </p>
+          <p style="color: #64748b; font-size: 13px;">若按鈕無法點擊，請複製以下連結至瀏覽器開啟：<br>${resetUrl}</p>
+          <p style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 10px 14px; color: #92400e; font-size: 13px;">
+            📌 若收件匣中沒有看到這封信，請查看您的「垃圾郵件」或「促銷」資料夾。
+          </p>
+          <hr style="border-color: #e2e8f0;">
+          <p style="font-size: 12px; color: #94a3b8;">此連結將於 1 小時後失效。若您並未申請重設密碼，請忽略此信件，您的密碼不會被更改。</p>
+        </div>
+      </div>
+    `;
+  }
+
   private buildEmailHtml(payload: NotificationPayload): string {
     const signalColor =
       payload.signal === 'BUY' ? '#22c55e' : payload.signal === 'SELL' ? '#ef4444' : '#f59e0b';
 
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <div style="background: #1e293b; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-          <h2 style="margin: 0;">📊 Stock Signal Alert</h2>
-        </div>
+        ${this.buildEmailHeader()}
         <div style="background: #f8fafc; padding: 20px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0;">
           <h3 style="color: #1e293b;">${payload.title}</h3>
           ${payload.symbol ? `<p><strong>Symbol:</strong> ${payload.symbol}</p>` : ''}
